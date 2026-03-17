@@ -1,3 +1,9 @@
 /.build
 /.vscode
 /BSP_VISUALIZER_C_RAYLIB
+*.mp3
+*.wav
+*.ogg
+*.flac
+/putAudioFileHere
+/resources
