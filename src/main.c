@@ -9,6 +9,7 @@ int main(void)
     SetTargetFPS(INITIAL_FPS);
 
     Font Matisse_Pro_EB = LoadFont("resources/FOT-Matisse-Pro-EB.otf");
+    Font font = Matisse_Pro_EB;
 
     if (!IsAudioDeviceReady())
         InitAudioDevice();
@@ -18,23 +19,27 @@ int main(void)
     {
         TraceLog(LOG_ERROR, "Failed to load audio file");
     }
+    if (Matisse_Pro_EB.texture.id == 0)
+{
+    TraceLog(LOG_ERROR, "Font failed to load");
+}
 
     TIME = 0;
     RES_X = GetScreenWidth();
     RES_Y = GetScreenHeight();
     DT = 0.0f;
 
-    SCR_INFO scr_d = {.width = RES_X, .height = RES_Y, .dt = DT};
     PlayMusicStream(audio_file);
     AttachAudioStreamProcessor(audio_file.stream, audio_callback);
     bool is_playing = true;
 
     while (!WindowShouldClose())
     {
-        TIME += GetTime();
+
+        TIME += GetFrameTime();
         BOUND_LEFT = RES_X / 2.0f - RES_X/ 2.0f * 0.3f;
-        BOUND_RIGHT = RES_X / 2.0f + RES_X/ 2.0f * 0.3f;
-        window_monitor(IsWindowResized(), &scr_d);
+        BOUND_RIGHT = BOUND_LEFT*2;
+        window_monitor(IsWindowResized());
         music_switch(&is_playing, &audio_file);
         UpdateMusicStream(audio_file);
 
@@ -42,11 +47,10 @@ int main(void)
         ClearBackground(OFF_BLACK);
 
         _draw();
-        DrawTextPro(Matisse_Pro_EB, "NERV SIGNAL MONITOR", (Vector2){.x = 20, .y = 20}, (Vector2){10, 40}, 0, 10, 5, RED);
+        
         EndDrawing();
     }
     UnloadMusicStream(audio_file);
     CloseAudioDevice();
-    ;
     CloseWindow();
 }

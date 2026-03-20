@@ -7,3 +7,8 @@
 *.flac
 /putAudioFileHere
 /resources
+/audio_samples
+*.txt
+.DS_Store
+putAudioFileHere/.DS_Store
+putAudioFileHere/*.mp3
