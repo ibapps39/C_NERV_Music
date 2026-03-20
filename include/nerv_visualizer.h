@@ -5,24 +5,61 @@
 #include <stdlib.h> // Required for malloc/free
 #include <stdio.h>
 #include <stdbool.h>
-
+// Cooley-Tukey radix-2 DIT FFT, in-place, power-of-2 length
+#include <math.h>
+#include <stddef.h>
 struct Vec2
 {
     float x, y, z;
 };
 typedef Vector2 Vec2;
+typedef struct Parallelogram
+{
+    Vec2 pos;
+    float width;
+    float height;
+    float skew;
+} Parallelogram;
+
+// Signal structure
+typedef float (*Wave_f)(float);
+typedef struct Signal
+{
+    float freq;  // Fundamental frequency (Hz)
+    float amp;   // Linear amplitude (0.0 to 1.0)
+    float phase; // Current accumulator (0.0 to 2*PI)
+    float omega; // Angular frequency (computed: 2 * PI * freq / sampleRate)
+    Wave_f signature;
+} Signal;
+const int FFT_SIZE = 2048; // FFT_SIZE must be a power of 2
+// structurre
+typedef struct { float re, im; } Complex;
+typedef struct Sample
+{
+    float samples[FFT_SIZE]; // Precomputed samples for one second of audio at the given frequency
+    int write_head;
+    int sample_rate;
+} Sample;
+Sample g_sample = {0};
+static Complex g_fft_bins[FFT_SIZE]; // persistent, no alloc per frame
+
+
+// Globals
+// this should all be a struct, but we ball
 int RES_X, RES_Y, TIME;
 int DEFAULT_SAMPLE_RATE = 44100;
 float BOUND_LEFT;
 float BOUND_RIGHT;
 float TIP_Y;
-const int FFT_SIZE = 2048; // FFT_SIZE must be a power of 2
+float TIP_X;
+
 float DT;
-typedef struct SCR_INFO
-{
-    int width, height;
-    float dt;
-} SCR_INFO;
+float DWR; // change in width resolution
+float DHR; // change in height resolution
+float DR;  // change in resolution
+int FFT_RADIUS;
+float Y_AXIS;
+int ANGEL;
 
 // [=======================================================================================================================================]
 // TODO
@@ -48,6 +85,8 @@ typedef struct SCR_INFO
 #define PI_H M_PI / 2
 #define TRUE 1
 #define FALSE 0
+#define TRAIL_LEN 200
+#define BEZIER_SIZE 2
 
 // [=======================================================================================================================================]
 //  NERV COLORS
@@ -80,37 +119,76 @@ typedef struct SCR_INFO
 #define NERV_LCL_ORANGE (Color){255, 150, 50, 180}     // LCL Fluid visualization
 #define NERV_SYNC_GRAPH (Color){150, 255, 150, 255}    // Pulse/Graph line highlights
 
-/*
-UI Design Tips for the NERV Look
 
-Transparency is Key:
-NERV interfaces often use layers. Use an alpha value (the .a in your Color struct) of
-- around 160 to 200 for window backgrounds so you can see the grid behind them.
+// Bit-reversal permutation — scrambles input into the order the butterfly needs
+static void bit_reverse(Complex *x, int n) {
+    for (int i = 1, j = 0; i < n; i++) {
+        int bit = n >> 1;
+        for (; j & bit; bit >>= 1)
+            j ^= bit;
+        j ^= bit;
+        if (i < j) {
+            Complex tmp = x[i]; x[i] = x[j]; x[j] = tmp;
+        }
+    }
+}
 
-The "Scanline" Effect: In your Draw() loop, drawing a series of horizontal lines with
-- (Color){ 0, 0, 0, 50 } every 2 pixels instantly gives it that 90s CRT monitor vibe.
+// In-place FFT — x[] is overwritten with complex frequency bins
+void fft(Complex *x, int n) {
+    bit_reverse(x, n);
 
-The Font: If you can find it, use Matisse EB—that’s the specific serif font used for the
-- "ANGEL ATTACK" and "PATTERN BLUE" warnings.
-*/
-typedef float (*Wave_f)(float);
-typedef struct Signal
+    // len = current butterfly span, doubles each stage
+    for (int len = 2; len <= n; len <<= 1) {
+        float ang = -2.0f * (float)M_PI / len;
+        Complex wlen = { cosf(ang), sinf(ang) }; // principal twiddle for this stage
+
+        for (int i = 0; i < n; i += len) {
+            Complex w = { 1.0f, 0.0f }; // running twiddle, starts at W^0
+
+            for (int j = 0; j < len / 2; j++) {
+                Complex u = x[i + j];
+                // w * x[i+j+len/2] — complex multiply
+                Complex v = {
+                    w.re * x[i+j+len/2].re - w.im * x[i+j+len/2].im,
+                    w.re * x[i+j+len/2].im + w.im * x[i+j+len/2].re
+                };
+                x[i + j]          = (Complex){ u.re + v.re, u.im + v.im };
+                x[i + j + len/2]  = (Complex){ u.re - v.re, u.im - v.im };
+
+                // Advance twiddle: w *= wlen
+                float wr = w.re * wlen.re - w.im * wlen.im;
+                float wi = w.re * wlen.im + w.im * wlen.re;
+                w.re = wr; w.im = wi;
+            }
+        }
+    }
+}
+
+// Magnitude of bin k (what you actually visualize)
+static inline float fft_mag(Complex c) {
+    return sqrtf(c.re * c.re + c.im * c.im);
+}
+
+
+
+
+void compute_fft(Sample *s)
 {
-    float freq;  // Fundamental frequency (Hz)
-    float amp;   // Linear amplitude (0.0 to 1.0)
-    float phase; // Current accumulator (0.0 to 2*PI)
-    float omega; // Angular frequency (computed: 2 * PI * freq / sampleRate)
-    Wave_f signature;
-} Signal;
+    // Copy ring buffer into FFT input, correcting for write_head offset
+    // Apply a Hann window to suppress spectral leakage at bin edges
+    for (int i = 0; i < FFT_SIZE; i++)
+    {
+        int idx = (s->write_head + i) % FFT_SIZE;
+        float raw = s->samples[idx];
 
-typedef struct Sample
-{
-    float samples[FFT_SIZE]; // Precomputed samples for one second of audio at the given frequency
-    int write_head;
-    int sample_rate;
-} Sample;
-Sample g_sample = {0};
+        // Hann window: w(i) = 0.5 * (1 - cos(2π·i / (N-1)))
+        float window = 0.5f * (1.0f - cosf(2.0f * (float)M_PI * i / (FFT_SIZE - 1)));
 
+        g_fft_bins[i].re = raw * window;
+        g_fft_bins[i].im = 0.0f;
+    }
+    fft(g_fft_bins, FFT_SIZE);
+}
 
 //[=======================================================================================================================================
 // GUI, UI, Monitors, etc
@@ -125,6 +203,7 @@ void audio_callback(void *bufferdata, unsigned int sample_pairs_count)
         g_sample.write_head = (g_sample.write_head + 1) % FFT_SIZE;
     }
 }
+
 void music_switch(bool *is_playing, Music *audio_file)
 {
     if (IsKeyPressed(KEY_SPACE))
@@ -141,21 +220,16 @@ void music_switch(bool *is_playing, Music *audio_file)
         }
     }
 }
-void window_monitor(bool is_resized, SCR_INFO *scr_info)
+void window_monitor(bool is_resized)
 {
     if (is_resized)
     {
         RES_X = GetScreenWidth();
         RES_Y = GetScreenHeight();
-        scr_info->width = RES_X;
-        scr_info->height = RES_Y;
+        DWR = RES_X / 700.0;
+        DHR = RES_Y / 400.0;
     }
     DT = GetFrameTime();
-    scr_info->dt = GetFrameTime();
-    if (TIME > 1000000)
-    {
-        TIME = 0;
-    }
 }
 //[=======================================================================================================================================
 // Processing
@@ -189,6 +263,7 @@ void draw_ui(int pos_x, int pos_y, int font_size, Color c)
 
 void draw_axis(int screenWidth, int screenHeight, int line_thickness, Color c)
 {
+    Y_AXIS = 0.9 * screenHeight;
     Vec2 x_axis = {.x = 0, .y = 0.9 * screenHeight};
     Vec2 x_end = {.x = screenWidth, .y = x_axis.y};
     Vec2 y_axis = {.x = .10 * screenWidth, .y = 0};
@@ -207,7 +282,7 @@ void draw_axis(int screenWidth, int screenHeight, int line_thickness, Color c)
         Vec2 v1 = {
             .x = v0.x,
             .y = v0.y + 2 * dash_h};
-        DrawLineEx(v0, v1, line_thickness / 2, GREEN);
+        DrawLineEx(v0, v1, line_thickness / 2, NERV_ALERT_RED);
     }
 
     // y
@@ -221,7 +296,7 @@ void draw_axis(int screenWidth, int screenHeight, int line_thickness, Color c)
         Vec2 v1 = {
             .x = v0.x + 2 * dash_w,
             .y = v0.y};
-        DrawLineEx(v0, v1, line_thickness / 2, GREEN);
+        DrawLineEx(v0, v1, line_thickness / 2, NERV_ALERT_RED);
     }
     if (offset < 0)
         offset += 50;
@@ -238,20 +313,36 @@ void draw_waveform(Sample *s, int width, int height, Color c)
         DrawPixel(i, y, c);
     }
 }
-#define TRAIL_LEN 300
-#define BEZIER_SIZE 2
-void draw_angle(Sample *s, int width, int height, Color *colors)
+
+int draw_angle(Sample *s, int width, int height, Color *colors)
 {
-    static float smooth_re = 0.0f;
-    static float smooth_im = 0.0f;
-    static float smooth_mag = 0.0f;
-    static float peak_mag = 0.001f;
+    static float smooth_re = 0.0f;  // real
+    static float smooth_im = 0.0f;  // imaginary
+    static float smooth_mag = 0.0f; // magnitude
+    // static float peak_mag = 0.001f;
     static Vector2 trail[TRAIL_LEN] = {0};
     static int trail_head = 0;
 
+    // find the peak bin in the bass range (bins 5–80 ≈ 108–1720 Hz)
+    int peak_bin = 5;
+    float peak_mag = 0.0f;
+    for (int k = 5; k < 80; k++)
+    {
+        float m = fft_mag(g_fft_bins[k]);
+        if (m > peak_mag)
+        {
+            peak_mag = m;
+            peak_bin = k;
+        }
+    }
+
+    float re = g_fft_bins[peak_bin].re;
+    float im = g_fft_bins[peak_bin].im;
+    // now re/im feed directly into your atan2f(im, re) phase — real frequency, real phase
+
     float alpha = 0.04f;
-    float re = s->samples[(s->write_head - 1 + FFT_SIZE) % FFT_SIZE];
-    float im = s->samples[s->write_head];
+    // float re = s->samples[(s->write_head - 1 + FFT_SIZE * 2) % FFT_SIZE];
+    // float im = s->samples[s->write_head];
     smooth_re = alpha * re + (1.0f - alpha) * smooth_re;
     smooth_im = alpha * im + (1.0f - alpha) * smooth_im;
 
@@ -260,30 +351,30 @@ void draw_angle(Sample *s, int width, int height, Color *colors)
     smooth_mag = 0.1f * raw_mag + 0.9f * smooth_mag;
 
     // Self-calibrating peak normalization
+    ANGEL = (peak_mag >= 444.0f) ? 1 : 0;
     peak_mag *= 0.999f;
     if (raw_mag > peak_mag)
         peak_mag = raw_mag;
     float mag_normalized = smooth_mag / peak_mag;
     mag_normalized = mag_normalized > 1.0f ? 1.0f : (mag_normalized < 0.0f ? 0.0f : mag_normalized);
 
-    float t_sec = TIME * DT;
+    // float t_sec = TIME * DT;
 
     Vector2 origin = {width / 2.0f, height / 2.0f};
 
-    // Slow origin drift
-    float drift_r = 5.0f;
-    origin.x += drift_r * sinf(t_sec * 0.3f);
-    origin.y += drift_r * cosf(t_sec * 0.47f); // different freq = non-repeating lissajous drift
-
     // Breathing radius
     float radius = fminf(width, height) * 0.3f;
-    radius *= (1.0f + 0.018f * sinf(t_sec * 0.7f));
+    radius *= (1.0f + 0.018f * sinf(0.7f));
+
+    FFT_RADIUS = radius;
 
     float needle_len = radius * mag_normalized;
 
+    float noise = 0.01f * radius * (sinf(1.3f) + cosf(0.9f));
+
     Vector2 tip = {
-        origin.x + cosf(phase) * needle_len,
-        origin.y - sinf(phase) * needle_len};
+        .x = origin.x + cosf(phase) * needle_len,
+        .y = origin.y - sinf(phase) * (needle_len + noise)};
 
     // Fading trail — color shifts red when needle is long (loud)
     trail[trail_head] = tip;
@@ -294,18 +385,13 @@ void draw_angle(Sample *s, int width, int height, Color *colors)
         int a = (trail_head + i) % TRAIL_LEN;
         int b = (trail_head + i + 1) % TRAIL_LEN;
         float t = (float)i / TRAIL_LEN;
-        // if (needle_len > 60.0f) trail_color = NERV_ALERT_RED;
-        // else if (needle_len > 30.0f && needle_len <= 60.0f) trail_color = NERV_MAP_ORANGE;
-        // else trail_color = NERV_INTERFACE_BLUE;
         Color trail_color = (Color){
             .r = NERV_MAP_ORANGE.r,
             .g = NERV_MAP_ORANGE.g,
             .b = NERV_MAP_ORANGE.b,
             // .a = (unsigned char)(255 * t * t)
-            .a = 255
-        };
-        if (trail[a].x == 0 && trail[a].y == 0
-            || trail[b].x == 0 && trail[b].y == 0) 
+            .a = 255};
+        if (trail[a].x == 0 && trail[a].y == 0 || trail[b].x == 0 && trail[b].y == 0)
         {
             continue; // skip uninitialized points
         }
@@ -313,37 +399,213 @@ void draw_angle(Sample *s, int width, int height, Color *colors)
     }
     Vec2 left_l = {
         .x = BOUND_LEFT,
-        .y = tip.y
-    };
+        .y = BOUND_LEFT - tip.y};
     Vec2 right_l = {
         .x = BOUND_RIGHT,
-        .y = tip.y
-    };
+        .y = BOUND_RIGHT - tip.y};
     DrawLineBezier(left_l, tip, BEZIER_SIZE, NERV_MAP_ORANGE);
     DrawLineBezier(right_l, tip, BEZIER_SIZE, NERV_MAP_ORANGE);
     TIP_Y = tip.y;
+    TIP_X = tip.x;
 }
 //[=======================================================================================================================================]]
 void draw_l()
 {
-    DrawLineBezier((Vector2){0, RES_Y-RES_Y/9}, (Vector2){BOUND_LEFT, TIP_Y}, BEZIER_SIZE, NERV_MAP_ORANGE);
+    Vec2 v0 = {
+        .x = 0,
+        .y = RES_Y - RES_Y / 9};
+    Vec2 v1 = {
+        .x = BOUND_LEFT,
+        .y = BOUND_LEFT - TIP_Y};
+    DrawLineBezier(v0, v1, BEZIER_SIZE, NERV_MAP_ORANGE);
 }
 void draw_r()
 {
-    DrawLineBezier((Vector2){BOUND_RIGHT, TIP_Y}, (Vector2){RES_X, RES_Y-RES_Y/9}, BEZIER_SIZE, NERV_MAP_ORANGE);
+    Vec2 v0 = {
+        .x = BOUND_RIGHT,
+        .y = BOUND_RIGHT - TIP_Y};
+    Vec2 v1 = {
+        .x = RES_X,
+        .y = RES_Y - RES_Y / 9};
+    DrawLineBezier(v0, v1, BEZIER_SIZE, NERV_MAP_ORANGE);
+}
+
+void draw_parallelogram(Vec2 pos, float width, float height, float skew, Color color)
+{
+    Vec2 p1 = pos;
+    Vec2 p2 = {pos.x + width, pos.y};
+    Vec2 p3 = {pos.x + width + skew, pos.y + height};
+    Vec2 p4 = {pos.x + skew, pos.y + height};
+
+    DrawTriangle(p1, p2, p3, color);
+    DrawTriangle(p1, p3, p4, color);
+}
+void draw_parallelogram_para(Parallelogram p, Color color)
+{
+    float x = p.pos.x;
+    float y = p.pos.y;
+    float w = p.width;
+    float h = p.height;
+    float s = p.skew;
+
+    Vector2 p1 = {x, y};
+    Vector2 p2 = {x + w, y};
+    Vector2 p3 = {x + w + s, y + h};
+    Vector2 p4 = {x + s, y + h};
+
+    DrawTriangle(p1, p4, p3, color); // left triangle  (CCW)
+    DrawTriangle(p1, p3, p2, color); // right triangle (CCW)
+}
+
+void draw_header(Vec2 pos, float width, float height, Color bar_c, Color backg_c)
+{
+    Parallelogram background = {
+        .pos = pos,
+        .width = width,
+        .height = height,
+        .skew = 0};
+    draw_parallelogram_para(background, backg_c);
+
+    float scroll_speed = width * 0.2f;
+    static float pos_x = 0.0f;
+    pos_x += scroll_speed * GetFrameTime();
+
+    const int num_bars = 20;
+    float bar_width = background.width / num_bars;
+    float bar_height = background.height;
+    float offset = fmodf(pos_x, bar_width * 2); // wraps every 1 bar period
+
+    for (size_t i = 0; i < num_bars + 1; i++) // +2 covers edges
+    {
+        Parallelogram p = {
+            .pos =
+                {
+                    .x = (i * bar_width * 2) - offset,
+                    .y = 0},
+            .width = bar_width,
+            .height = background.height,
+            .skew = -(bar_width * 0.5f)};
+        draw_parallelogram_para(p, bar_c);
+    }
+}
+
+void draw_overlay(int width, int height) //, int FFT_RADIUS)
+{
+    float origin = width / 2.0f;
+    float slice = width / 3.0f;
+    for (size_t i = origin - slice; i < width + slice; i += slice)
+    {
+        Vec2 v = {
+            .x = i,
+            .y = 0};
+        Vec2 v2 = {
+            .x = i + 1,
+            .y = height};
+        float center_x = i + slice / 2.0f;
+        float center_y = height / 2.0f;
+
+        float size = 5.0f;
+
+        // horizontal line of cross
+        DrawLine(center_x - size, center_y,
+                 center_x + size, center_y,
+                 GREEN);
+
+        // vertical line of cross
+        DrawLine(center_x, center_y - size,
+                 center_x, center_y + size,
+                 GREEN);
+        // this is fine
+        DrawLineBezier(v, v2, 1, GREEN);
+    }
+}
+
+void draw_cover(Vec2 pos, float width, float height, Color bar_c, Color backg_c)
+{
+
+    float scroll_speed = height * 0.15f;
+    static float pos_y = 0.0f;
+    pos_y -= scroll_speed * GetFrameTime();
+
+    const int num_bars = 12;            // 12 bars + 12 gaps = height
+    int bar_height = height / num_bars; // bar + gap both = bar_height
+    float period = bar_height * 2.0f;
+
+    float offset = fmodf(pos_y, period);
+    if (offset > 0)
+        offset -= period;
+
+    for (int i = -1; i < num_bars * 2 + 1; i++)
+    {
+        float bar_y = pos.y + (i * period) + offset;
+
+        Rectangle r =
+            {
+                .width = width,
+                .height = bar_height,
+                .x = pos.x,
+                .y = bar_y};
+        DrawRectangleRec(r, bar_c);
+    }
+}
+void draw_angel_warning(int warning, Font f)
+{
+    if (!warning){}
+    Rectangle r = {
+        .width = RES_X/4,
+        .height = RES_Y/4,
+        .x = RES_X/2,
+        .y = RES_Y/2
+    };
+    Vec2 rv = {
+        .x = r.x,
+        .y = r.y
+    };
+    int font_size = r.height/2;
+    Vec2 tx = {
+        .x = r.x/2,
+        .y = r.y/2
+    };
+    int alpha = ((int)(GetTime() * 4)%2)*255;
+    Color r_color = NERV_INTERFACE_BLUE;
+    r_color.a = alpha;
+    DrawRectangleRoundedLines(r, 0.2, 8, r_color);
+    DrawTextPro(f, "ANGEL", tx, rv, 0, font_size, 10, NERV_INTERFACE_BLUE);
 }
 void draw_signals()
 {
-    // draw_waveform(&g_sample, RES_X, RES_Y, NERV_SYNC_GRAPH);
+    compute_fft(&g_sample);
     Color angle_colors[3] = {NERV_ALERT_RED, NERV_MAP_ORANGE, NERV_INTERFACE_BLUE};
     draw_angle(&g_sample, RES_X, RES_Y, angle_colors);
     draw_l();
     draw_r();
 }
-
 void _draw()
 {
+    static Font f;
+    static bool init = false;
+    if (!init)
+    {
+        init = true;
+        f = LoadFont("resources/FOT-Matisse-Pro-EB.otf");
+    }
+    Vec2 header = {
+        .x = RES_X,
+        .y = 0,
+    };
+    Vec2 cover_l = {
+        .x = BOUND_LEFT,
+        .y = 0};
+    Vec2 cover_r = {
+        .x = BOUND_RIGHT,
+        .y = 0};
     draw_signals();
     draw_axis(RES_X, RES_Y, 5, NERV_MAGI_AMBER);
-    // draw_scanlines(RES_X, RES_Y, 2, BLACK);
+    draw_overlay(RES_X - RES_X / 4, RES_Y);
+    draw_angel_warning(ANGEL, f);
+    // draw_song_name();
+
+    // draw_header(header, RES_X, RES_Y / 9, EVA_02_RED, NERV_MAGI_AMBER);
+    //  draw_grid_bars_slants((Vec2){RES_X/2-RES_X*0.5f, RES_Y-RES_Y*0.5f});
+    //   draw_scanlines(RES_X, RES_Y, 2, BLACK);
 }
