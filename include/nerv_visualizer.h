@@ -8,62 +8,6 @@
 // Cooley-Tukey radix-2 DIT FFT, in-place, power-of-2 length
 #include <math.h>
 #include <stddef.h>
-struct Vec2
-{
-    float x, y, z;
-};
-typedef Vector2 Vec2;
-typedef struct Parallelogram
-{
-    Vec2 pos;
-    float width;
-    float height;
-    float skew;
-} Parallelogram;
-
-// Signal structure
-typedef float (*Wave_f)(float);
-typedef struct Signal
-{
-    float freq;  // Fundamental frequency (Hz)
-    float amp;   // Linear amplitude (0.0 to 1.0)
-    float phase; // Current accumulator (0.0 to 2*PI)
-    float omega; // Angular frequency (computed: 2 * PI * freq / sampleRate)
-    Wave_f signature;
-} Signal;
-const int FFT_SIZE = 2048; // FFT_SIZE must be a power of 2
-// structurre
-typedef struct { float re, im; } Complex;
-typedef struct Sample
-{
-    float samples[FFT_SIZE]; // Precomputed samples for one second of audio at the given frequency
-    int write_head;
-    int sample_rate;
-} Sample;
-Sample g_sample = {0};
-static Complex g_fft_bins[FFT_SIZE]; // persistent, no alloc per frame
-
-
-// Globals
-// this should all be a struct, but we ball
-int RES_X, RES_Y, TIME;
-int DEFAULT_SAMPLE_RATE = 44100;
-float BOUND_LEFT;
-float BOUND_RIGHT;
-float TIP_Y;
-float TIP_X;
-
-float DT;
-float DWR; // change in width resolution
-float DHR; // change in height resolution
-float DR;  // change in resolution
-int FFT_RADIUS;
-float Y_AXIS;
-int ANGEL;
-
-// [=======================================================================================================================================]
-// TODO
-//
 
 // [=======================================================================================================================================]
 // DEFAULTS, CONSTANTS, & MACROS
@@ -119,7 +63,138 @@ int ANGEL;
 #define NERV_LCL_ORANGE (Color){255, 150, 50, 180}     // LCL Fluid visualization
 #define NERV_SYNC_GRAPH (Color){150, 255, 150, 255}    // Pulse/Graph line highlights
 
+const int FFT_SIZE = 2048; // FFT_SIZE must be a power of 2
 
+//[=======================================================================================================================================]
+// CUSTOM TYPES
+//[=======================================================================================================================================]
+struct Vec2
+{
+    float x, y, z;
+};
+typedef Vector2 Vec2;
+typedef struct Parallelogram
+{
+    Vec2 pos;
+    float width;
+    float height;
+    float skew;
+} Parallelogram;
+
+// Signal structure
+typedef float (*Wave_f)(float);
+typedef struct Signal
+{
+    float freq;  // Fundamental frequency (Hz)
+    float amp;   // Linear amplitude (0.0 to 1.0)
+    float phase; // Current accumulator (0.0 to 2*PI)
+    float omega; // Angular frequency (computed: 2 * PI * freq / sampleRate)
+    Wave_f signature;
+} Signal;
+// structurre
+typedef struct { float re, im; } Complex;
+typedef struct Sample
+{
+    float samples[FFT_SIZE]; // Precomputed samples for one second of audio at the given frequency
+    int write_head;
+    int sample_rate;
+} Sample;
+Sample g_sample = {0};
+static Complex g_fft_bins[FFT_SIZE]; // persistent, no alloc per frame
+
+
+typedef enum FONTS
+{
+    MAT_PRO_EB,
+    MAT_CLASSIC,
+    MAT_STD,
+    JP_MAT_STD,
+    JP_MAT_CLASSIC,
+} FONTS;
+
+//[=======================================================================================================================================]
+// GLOBALS
+//[=======================================================================================================================================]
+
+// Globals
+// this should all be a struct, but we ball
+int RES_X, RES_Y, TIME;
+int DEFAULT_SAMPLE_RATE = 44100;
+float BOUND_LEFT;
+float BOUND_RIGHT;
+float TIP_Y;
+float TIP_X;
+
+float DT;
+float DWR; // change in width resolution
+float DHR; // change in height resolution
+float DR;  // change in resolution
+float PEAK_SAMPLE;
+float MIN_SAMPLE;
+int FFT_RADIUS;
+float Y_AXIS;
+int ANGEL;
+
+// [=======================================================================================================================================]
+// FONTS
+// [=======================================================================================================================================]
+void load_nerv_fonts(Font* fonts, int** cjk_out, int* cp_count_out)
+{
+    // Define the CJK range
+    int start = 0x4E00;
+    int end = 0x9FFF;
+    *cp_count_out = end - start + 1;
+    
+    // Allocate and fill codepoints array
+    *cjk_out = (int *)malloc((*cp_count_out) * sizeof(int));
+    for (int i = 0; i < *cp_count_out; i++)
+    {
+        (*cjk_out)[i] = start + i;
+    }
+
+    // Load Basic Fonts
+    fonts[MAT_PRO_EB]  = LoadFont("resources/FOT-Matisse-Pro-EB.otf");
+    fonts[MAT_CLASSIC] = LoadFont("resources/EVA-Matisse_Classic.ttf");
+    fonts[MAT_STD]     = LoadFont("resources/EVA-Matisse_Standard.ttf");
+
+    // Load Heavy JP Fonts with Codepoints
+    fonts[JP_MAT_STD]     = LoadFontEx("resources/EVA-Matisse_Standard.ttf", 64, *cjk_out, *cp_count_out);
+    fonts[JP_MAT_CLASSIC] = LoadFontEx("resources/EVA-Matisse_Classic.ttf", 64, *cjk_out, *cp_count_out);
+
+    // for (size_t i = 0; i < 5; i++)
+    // {
+    //     if (fonts[i].texture.id == 0)
+    //     {
+    //         char* font_names[5] = {"MAT_PRO_EB", "MAT_CLASSIC", "MAT_STD", "JP_MAT_STD", "JP_MAT_CLASSIC"};
+    //         char* msg = "Failed to load font: %s", font_names[i];
+    //         switch (i)
+    //         {
+    //         case MAT_PRO_EB:
+    //             /* code */
+    //             break;
+    //         case MAT_CLASSIC:
+    //             /* code */
+    //             break;
+    //         case MAT_STD:
+    //             /* code */
+    //             break;
+    //         case JP_MAT_STD:
+    //             /* code */
+    //             break;
+    //         case JP_MAT_CLASSIC:
+    //             /* code */
+    //             break;
+            
+    //         default:
+    //             break;
+    //         }
+    //         TraceLog(LOG_ERROR, "Font failed to load");
+    //     }
+    // }
+}
+// [=======================================================================================================================================]
+// FFT
+// [=======================================================================================================================================]
 // Bit-reversal permutation — scrambles input into the order the butterfly needs
 static void bit_reverse(Complex *x, int n) {
     for (int i = 1, j = 0; i < n; i++) {
@@ -168,9 +243,6 @@ void fft(Complex *x, int n) {
 static inline float fft_mag(Complex c) {
     return sqrtf(c.re * c.re + c.im * c.im);
 }
-
-
-
 
 void compute_fft(Sample *s)
 {
@@ -314,7 +386,7 @@ void draw_waveform(Sample *s, int width, int height, Color c)
     }
 }
 
-int draw_angle(Sample *s, int width, int height, Color *colors)
+void draw_angle(Sample *s, int width, int height, Color *colors)
 {
     static float smooth_re = 0.0f;  // real
     static float smooth_im = 0.0f;  // imaginary
@@ -351,14 +423,21 @@ int draw_angle(Sample *s, int width, int height, Color *colors)
     smooth_mag = 0.1f * raw_mag + 0.9f * smooth_mag;
 
     // Self-calibrating peak normalization
-    ANGEL = (peak_mag >= 444.0f) ? 1 : 0;
     peak_mag *= 0.999f;
     if (raw_mag > peak_mag)
         peak_mag = raw_mag;
     float mag_normalized = smooth_mag / peak_mag;
     mag_normalized = mag_normalized > 1.0f ? 1.0f : (mag_normalized < 0.0f ? 0.0f : mag_normalized);
+    PEAK_SAMPLE = peak_mag;
+    if (raw_mag > 20)
+    {
+        ANGEL = 1;
+    }
+    else
+    {
+        ANGEL = 0;
+    }
 
-    // float t_sec = TIME * DT;
 
     Vector2 origin = {width / 2.0f, height / 2.0f};
 
@@ -548,29 +627,60 @@ void draw_cover(Vec2 pos, float width, float height, Color bar_c, Color backg_c)
         DrawRectangleRec(r, bar_c);
     }
 }
-void draw_angel_warning(int warning, Font f)
+void draw_angel_warning(int warning, Font f_eng, Font f_jap)
 {
-    if (!warning){}
+    if (!warning) return;
+
     Rectangle r = {
-        .width = RES_X/4,
-        .height = RES_Y/4,
-        .x = RES_X/2,
-        .y = RES_Y/2
+        .width  = RES_X / 2.5f,
+        .height = RES_Y / 2.5f,
+        .x      = RES_X / 4.0f,
+        .y      = RES_Y / 5.0f
     };
-    Vec2 rv = {
-        .x = r.x,
-        .y = r.y
-    };
-    int font_size = r.height/2;
-    Vec2 tx = {
-        .x = r.x/2,
-        .y = r.y/2
-    };
-    int alpha = ((int)(GetTime() * 4)%2)*255;
+
     Color r_color = NERV_INTERFACE_BLUE;
-    r_color.a = alpha;
-    DrawRectangleRoundedLines(r, 0.2, 8, r_color);
-    DrawTextPro(f, "ANGEL", tx, rv, 0, font_size, 10, NERV_INTERFACE_BLUE);
+
+    DrawRectangleRoundedLines(r, 0.2f, 80, r_color);
+
+    // --- fit JP text to top half of rectangle ---
+    float target_w = r.width * 0.8f;   // leave 10% padding each side
+    float target_h = r.height * 0.45f; // top half
+
+    // Start at a guess, then scale to fit width
+    float jp_size = target_h;
+    Vector2 jp_measured = MeasureTextEx(f_jap, "天使", jp_size, 0);
+    if (jp_measured.x > target_w)
+        jp_size *= target_w / jp_measured.x; // shrink to fit width
+
+    jp_measured = MeasureTextEx(f_jap, "天使", jp_size, 0);
+    Vec2 jp_pos = {
+        .x = r.x + (r.width - jp_measured.x) / 2.0f,  // centered
+        .y = r.y + r.height * 0.05f
+    };
+
+    // --- fit ENG text to bottom half ---
+    float eng_size = target_h;
+    Vector2 eng_measured = MeasureTextEx(f_eng, "Angle", eng_size, 0);
+    if (eng_measured.x > target_w)
+        eng_size *= target_w / eng_measured.x;
+
+    eng_measured = MeasureTextEx(f_eng, "Angle", eng_size, 0);
+    Vec2 eng_pos = {
+        .x = r.x + (r.width - eng_measured.x) / 2.0f, // centered
+        .y = r.y + r.height * 0.5f
+    };
+
+    DrawTextEx(f_jap, "天使", jp_pos, jp_size, 0, r_color);
+    DrawTextEx(f_eng, "Angle", eng_pos, eng_size, 0, r_color);
+}
+void play_angle_warning_sound(int warning, Sound* sound) {
+    if (!warning) return;
+    static double last_angle_warning_time = 0.0f;
+    double now = GetTime();
+    if(now - last_angle_warning_time < 5) return;
+    last_angle_warning_time = now;
+    SetSoundVolume(*sound, 1.0f);
+    PlaySound(*sound);
 }
 void draw_signals()
 {
@@ -580,15 +690,8 @@ void draw_signals()
     draw_l();
     draw_r();
 }
-void _draw()
+void _draw(Font fonts[])
 {
-    static Font f;
-    static bool init = false;
-    if (!init)
-    {
-        init = true;
-        f = LoadFont("resources/FOT-Matisse-Pro-EB.otf");
-    }
     Vec2 header = {
         .x = RES_X,
         .y = 0,
@@ -602,7 +705,7 @@ void _draw()
     draw_signals();
     draw_axis(RES_X, RES_Y, 5, NERV_MAGI_AMBER);
     draw_overlay(RES_X - RES_X / 4, RES_Y);
-    draw_angel_warning(ANGEL, f);
+    draw_angel_warning(ANGEL, fonts[MAT_CLASSIC], fonts[JP_MAT_CLASSIC]);
     // draw_song_name();
 
     // draw_header(header, RES_X, RES_Y / 9, EVA_02_RED, NERV_MAGI_AMBER);

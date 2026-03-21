@@ -10,5 +10,8 @@
 /audio_samples
 *.txt
 .DS_Store
-putAudioFileHere/.DS_Store
+putAudioFileHere/.DS_store
 putAudioFileHere/*.mp3
+
+.DS_Store
+NERV_Visualizer
