@@ -8,21 +8,24 @@ int main(void)
     InitWindow(INITIAL_SCREEN_WIDTH, INITIAL_SCREEN_HEIGHT, "NERV Sine Monitor");
     SetTargetFPS(INITIAL_FPS);
 
-    Font Matisse_Pro_EB = LoadFont("resources/FOT-Matisse-Pro-EB.otf");
-    Font font = Matisse_Pro_EB;
+    Font fonts[6];
+    int *cjk_ptr = NULL;
+    int cp_count = 0;
 
+    load_nerv_fonts(fonts, &cjk_ptr, &cp_count);
+
+    
     if (!IsAudioDeviceReady())
         InitAudioDevice();
+    //InitAudioDevice();
     Music audio_file = LoadMusicStream("putAudioFileHere/song.mp3");
+    Sound alarm_tone = LoadSound("resources/Target_locked_tone.ogg");
     // right after LoadMusicStream:
     if (audio_file.stream.buffer == NULL)
     {
         TraceLog(LOG_ERROR, "Failed to load audio file");
     }
-    if (Matisse_Pro_EB.texture.id == 0)
-{
-    TraceLog(LOG_ERROR, "Font failed to load");
-}
+
 
     TIME = 0;
     RES_X = GetScreenWidth();
@@ -35,22 +38,25 @@ int main(void)
 
     while (!WindowShouldClose())
     {
-
         TIME += GetFrameTime();
-        BOUND_LEFT = RES_X / 2.0f - RES_X/ 2.0f * 0.3f;
-        BOUND_RIGHT = BOUND_LEFT*2;
+        BOUND_LEFT = RES_X / 2.0f - RES_X / 2.0f * 0.3f;
+        BOUND_RIGHT = BOUND_LEFT * 2;
         window_monitor(IsWindowResized());
         music_switch(&is_playing, &audio_file);
         UpdateMusicStream(audio_file);
-
+        play_angle_warning_sound(ANGEL, &alarm_tone);
         BeginDrawing();
         ClearBackground(OFF_BLACK);
 
-        _draw();
+        _draw(fonts, &audio_file);
         
+
         EndDrawing();
     }
+    // --- CLEANUP SECTION ---
     UnloadMusicStream(audio_file);
     CloseAudioDevice();
+    for (int i = 0; i < 5; i++) UnloadFont(fonts[i]);
+    free(cjk_ptr);
     CloseWindow();
 }
