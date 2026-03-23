@@ -8,11 +8,12 @@ int main(void)
     InitWindow(INITIAL_SCREEN_WIDTH, INITIAL_SCREEN_HEIGHT, "NERV Sine Monitor");
     SetTargetFPS(INITIAL_FPS);
 
-    Font fonts[5];
+    Font fonts[6];
     int *cjk_ptr = NULL;
     int cp_count = 0;
 
     load_nerv_fonts(fonts, &cjk_ptr, &cp_count);
+
     
     if (!IsAudioDeviceReady())
         InitAudioDevice();
@@ -47,7 +48,7 @@ int main(void)
         BeginDrawing();
         ClearBackground(OFF_BLACK);
 
-        _draw(fonts);
+        _draw(fonts, &audio_file);
         
 
         EndDrawing();

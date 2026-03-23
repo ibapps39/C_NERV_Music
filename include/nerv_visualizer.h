@@ -110,7 +110,25 @@ typedef enum FONTS
     MAT_STD,
     JP_MAT_STD,
     JP_MAT_CLASSIC,
+    BOLD_DS_DIGITAL
 } FONTS;
+
+typedef struct { // AI
+    int   bin;
+    float re, im;
+    float mag;
+} PeakBin;
+
+typedef struct { // AI
+    float phase;
+    float raw_mag;
+    float smooth_mag;
+} PhaseState;
+
+typedef struct RectState{ // AI
+    Vector2 tip;
+    bool    is_transient;
+} RectState;
 
 //[=======================================================================================================================================]
 // GLOBALS
@@ -161,42 +179,13 @@ void load_nerv_fonts(Font* fonts, int** cjk_out, int* cp_count_out)
     fonts[JP_MAT_STD]     = LoadFontEx("resources/EVA-Matisse_Standard.ttf", 64, *cjk_out, *cp_count_out);
     fonts[JP_MAT_CLASSIC] = LoadFontEx("resources/EVA-Matisse_Classic.ttf", 64, *cjk_out, *cp_count_out);
 
-    // for (size_t i = 0; i < 5; i++)
-    // {
-    //     if (fonts[i].texture.id == 0)
-    //     {
-    //         char* font_names[5] = {"MAT_PRO_EB", "MAT_CLASSIC", "MAT_STD", "JP_MAT_STD", "JP_MAT_CLASSIC"};
-    //         char* msg = "Failed to load font: %s", font_names[i];
-    //         switch (i)
-    //         {
-    //         case MAT_PRO_EB:
-    //             /* code */
-    //             break;
-    //         case MAT_CLASSIC:
-    //             /* code */
-    //             break;
-    //         case MAT_STD:
-    //             /* code */
-    //             break;
-    //         case JP_MAT_STD:
-    //             /* code */
-    //             break;
-    //         case JP_MAT_CLASSIC:
-    //             /* code */
-    //             break;
-            
-    //         default:
-    //             break;
-    //         }
-    //         TraceLog(LOG_ERROR, "Font failed to load");
-    //     }
-    // }
+    fonts[BOLD_DS_DIGITAL] = LoadFont("resources/ds_digital/DS-DIGIB.TTF"); // clock font
 }
 // [=======================================================================================================================================]
 // FFT
 // [=======================================================================================================================================]
 // Bit-reversal permutation — scrambles input into the order the butterfly needs
-static void bit_reverse(Complex *x, int n) {
+static void bit_reverse(Complex *x, int n) { // AI
     for (int i = 1, j = 0; i < n; i++) {
         int bit = n >> 1;
         for (; j & bit; bit >>= 1)
@@ -209,7 +198,7 @@ static void bit_reverse(Complex *x, int n) {
 }
 
 // In-place FFT — x[] is overwritten with complex frequency bins
-void fft(Complex *x, int n) {
+void fft(Complex *x, int n) { // AI
     bit_reverse(x, n);
 
     // len = current butterfly span, doubles each stage
@@ -240,11 +229,11 @@ void fft(Complex *x, int n) {
 }
 
 // Magnitude of bin k (what you actually visualize)
-static inline float fft_mag(Complex c) {
+static inline float fft_mag(Complex c) { // AI
     return sqrtf(c.re * c.re + c.im * c.im);
 }
 
-void compute_fft(Sample *s)
+void compute_fft(Sample *s) //AI
 {
     // Copy ring buffer into FFT input, correcting for write_head offset
     // Apply a Hann window to suppress spectral leakage at bin edges
@@ -373,121 +362,224 @@ void draw_axis(int screenWidth, int screenHeight, int line_thickness, Color c)
     if (offset < 0)
         offset += 50;
 }
-void draw_waveform(Sample *s, int width, int height, Color c)
-{
-    for (int i = 0; i < width; i++)
-    {
-        // map pixel x → sample index
-        int idx = (s->write_head + i * FFT_SIZE / width) % FFT_SIZE;
-        float sample = s->samples[idx];
-        // map -1..1 amplitude to screen y
-        int y = (int)(height / 2 - sample * height / 2);
-        DrawPixel(i, y, c);
-    }
-}
+//[=======================================================================================================================================]]
+// AI
+//[=======================================================================================================================================]]
+//[=======================================================================================================================================]]
+// ── DSP 
 
-void draw_angle(Sample *s, int width, int height, Color *colors)
+static PeakBin find_peak_bin(void) // AI
 {
-    static float smooth_re = 0.0f;  // real
-    static float smooth_im = 0.0f;  // imaginary
-    static float smooth_mag = 0.0f; // magnitude
-    // static float peak_mag = 0.001f;
-    static Vector2 trail[TRAIL_LEN] = {0};
-    static int trail_head = 0;
-
-    // find the peak bin in the bass range (bins 5–80 ≈ 108–1720 Hz)
-    int peak_bin = 5;
-    float peak_mag = 0.0f;
-    for (int k = 5; k < 80; k++)
-    {
+    PeakBin p = { .bin = 5, .re = 0, .im = 0, .mag = 0.0f };
+    for (int k = 5; k < 80; k++) {
         float m = fft_mag(g_fft_bins[k]);
-        if (m > peak_mag)
-        {
-            peak_mag = m;
-            peak_bin = k;
+        if (m > p.mag) {
+            p.mag = m;
+            p.bin = k;
         }
     }
+    p.re = g_fft_bins[p.bin].re;
+    p.im = g_fft_bins[p.bin].im;
+    return p;
+}
 
-    float re = g_fft_bins[peak_bin].re;
-    float im = g_fft_bins[peak_bin].im;
-    // now re/im feed directly into your atan2f(im, re) phase — real frequency, real phase
+// Returns smoothed phase and magnitude. Owns its own static storage.
+static PhaseState smooth_phase(float re, float im) // AI
+{
+    static float smooth_re  = 0.0f;
+    static float smooth_im  = 0.0f;
+    static float smooth_mag = 0.0f;
 
-    float alpha = 0.04f;
-    // float re = s->samples[(s->write_head - 1 + FFT_SIZE * 2) % FFT_SIZE];
-    // float im = s->samples[s->write_head];
-    smooth_re = alpha * re + (1.0f - alpha) * smooth_re;
-    smooth_im = alpha * im + (1.0f - alpha) * smooth_im;
+    const float alpha = 0.04f;
+    smooth_re  = alpha * re  + (1.0f - alpha) * smooth_re;
+    smooth_im  = alpha * im  + (1.0f - alpha) * smooth_im;
 
-    float phase = atan2f(smooth_im, smooth_re);
     float raw_mag = sqrtf(smooth_re * smooth_re + smooth_im * smooth_im);
     smooth_mag = 0.1f * raw_mag + 0.9f * smooth_mag;
 
-    // Self-calibrating peak normalization
+    return (PhaseState){
+        .phase      = atan2f(smooth_im, smooth_re),
+        .raw_mag    = raw_mag,
+        .smooth_mag = smooth_mag,
+    };
+}
+
+static float normalize_mag(float raw_mag, float smooth_mag, float *out_peak) // AI
+{
+    static float peak_mag = 0.001f;
     peak_mag *= 0.999f;
-    if (raw_mag > peak_mag)
-        peak_mag = raw_mag;
-    float mag_normalized = smooth_mag / peak_mag;
-    mag_normalized = mag_normalized > 1.0f ? 1.0f : (mag_normalized < 0.0f ? 0.0f : mag_normalized);
-    PEAK_SAMPLE = peak_mag;
-    if (raw_mag > 20)
-    {
-        ANGEL = 1;
-    }
-    else
-    {
-        ANGEL = 0;
-    }
+    if (raw_mag > peak_mag) peak_mag = raw_mag;
+    *out_peak = peak_mag;          // caller writes PEAK_SAMPLE
+    float n = smooth_mag / peak_mag;
+    return n > 1.0f ? 1.0f : (n < 0.0f ? 0.0f : n);
+}
 
+static float compute_radius(int width, int height) // AI
+{
+    float r = fminf(width, height) * 0.3f;
+    return r * (1.0f + 0.018f * sinf(0.7f));
+}
 
-    Vector2 origin = {width / 2.0f, height / 2.0f};
-
-    // Breathing radius
-    float radius = fminf(width, height) * 0.3f;
-    radius *= (1.0f + 0.018f * sinf(0.7f));
-
-    FFT_RADIUS = radius;
-
+static Vector2 compute_tip(Vector2 origin, float phase,
+                            float mag_normalized, float radius) // AI
+{
     float needle_len = radius * mag_normalized;
-
-    float noise = 0.01f * radius * (sinf(1.3f) + cosf(0.9f));
-
-    Vector2 tip = {
+    float noise      = 0.01f * radius * (sinf(1.3f) + cosf(0.9f));
+    return (Vector2){
         .x = origin.x + cosf(phase) * needle_len,
-        .y = origin.y - sinf(phase) * (needle_len + noise)};
+        .y = origin.y - sinf(phase) * (needle_len + noise),
+    };
+}
 
-    // Fading trail — color shifts red when needle is long (loud)
+// Returns a read-only view of the circular trail buffer.
+// (trail_head is also out so callers can iterate in order.)
+static const Vector2 *update_trail(Vector2 tip, int *out_head) // AI
+{
+    static Vector2 trail[TRAIL_LEN] = {0};
+    static int     trail_head       = 0;
+
     trail[trail_head] = tip;
-    trail_head = (trail_head + 1) % TRAIL_LEN;
+    trail_head        = (trail_head + 1) % TRAIL_LEN;
+    *out_head         = trail_head;
+    return trail;
+}
 
-    for (int i = 0; i < TRAIL_LEN - 1; i++)
-    {
-        int a = (trail_head + i) % TRAIL_LEN;
-        int b = (trail_head + i + 1) % TRAIL_LEN;
-        float t = (float)i / TRAIL_LEN;
-        Color trail_color = (Color){
-            .r = NERV_MAP_ORANGE.r,
-            .g = NERV_MAP_ORANGE.g,
-            .b = NERV_MAP_ORANGE.b,
-            // .a = (unsigned char)(255 * t * t)
-            .a = 255};
-        if (trail[a].x == 0 && trail[a].y == 0 || trail[b].x == 0 && trail[b].y == 0)
-        {
-            continue; // skip uninitialized points
-        }
-        DrawLineBezier(trail[a], trail[b], BEZIER_SIZE, trail_color);
+static void draw_needle(Vector2 tip) // AI
+{
+    Vector2 left  = { BOUND_LEFT,  BOUND_LEFT  - tip.y };
+    Vector2 right = { BOUND_RIGHT, BOUND_RIGHT - tip.y };
+    DrawLineBezier(left,  tip, BEZIER_SIZE, NERV_MAP_ORANGE);
+    DrawLineBezier(right, tip, BEZIER_SIZE, NERV_MAP_ORANGE);
+}
+
+// Maps phase [-π, π] and mag_normalized [0,1] onto a rectangle's interior.
+// Phase → X axis, mag → Y axis, with an edge-snap on loud hits.
+static RectState compute_rect_tip(Vector2 origin, float phase,
+                                   float mag_normalized, float raw_mag,
+                                   float rect_w, float rect_h) // AI
+{
+    static float snap_x      = 0.0f;  // current snapped x offset
+    static float snap_y      = 0.0f;
+    static float last_raw    = 0.0f;
+    static int   edge_lock   = -1;    // -1 = free, 0=top,1=right,2=bottom,3=left
+    
+
+    float half_w = rect_w * 0.5f;
+    float half_h = rect_h * 0.5f;
+
+
+    // Phase maps [-π, π] → [-half_w, half_w]
+    float x = (phase / (float)M_PI) * half_w;
+
+    static float prev_raw = 0.0f;
+    float dy     = (raw_mag - prev_raw) * 0.4f;   // velocity, not position
+    prev_raw     = raw_mag;
+    static float y_accum = 0.0f;
+    y_accum = y_accum * 0.92f + dy;               // leaky integrator
+    float y = y_accum * half_h;
+
+    // Transient detection: sudden spike in raw_mag
+    float delta      = raw_mag - last_raw;
+    bool  transient  = delta > (last_raw * 0.6f + 20.0f);
+    last_raw         = raw_mag;
+    
+
+    if (transient) {
+        // Snap tip to a random edge, biased by which quadrant phase puts us in
+        edge_lock = (int)(fabsf(phase) * 1.9f / (float)M_PI * 4.0f) % 4;
+        // Inject chaos offset that decays next frame
+        snap_x = ((phase > 0) ? 1.0f : -1.0f) * half_w * 0.85f;
+        snap_y = ((mag_normalized > 0.5f) ? 1.0f : -1.0f) * half_h * 0.85f;
+    } else {
+        // Decay snap back toward computed position
+        snap_x = snap_x * 0.88f + x * 0.12f;
+        snap_y = snap_y * 0.88f + y * 0.12f;
+        edge_lock = -1;
     }
-    Vec2 left_l = {
-        .x = BOUND_LEFT,
-        .y = BOUND_LEFT - tip.y};
-    Vec2 right_l = {
-        .x = BOUND_RIGHT,
-        .y = BOUND_RIGHT - tip.y};
-    DrawLineBezier(left_l, tip, BEZIER_SIZE, NERV_MAP_ORANGE);
-    DrawLineBezier(right_l, tip, BEZIER_SIZE, NERV_MAP_ORANGE);
-    TIP_Y = tip.y;
-    TIP_X = tip.x;
+
+    // If edge-locked, clamp the tip to that edge
+    float out_x = snap_x;
+    float out_y = snap_y;
+    switch (edge_lock) {
+        case 0: out_y = -half_h; break;          // top edge
+        case 1: out_x =  half_w; break;          // right edge
+        case 2: out_y =  half_h; break;          // bottom edge
+        case 3: out_x = -half_w; break;          // left edge
+        default: break;
+    }
+
+    return (RectState){
+        .tip = (Vector2){
+            .x = origin.x + out_x,
+            .y = origin.y + out_y,
+        },
+        .is_transient = transient,
+    };
+}
+
+static void draw_rect_trail(const Vector2 *trail, int head, bool is_transient) // AI
+{
+    for (int i = 0; i < TRAIL_LEN - 1; i++) {
+        int a = (head + i)     % TRAIL_LEN;
+        int b = (head + i + 1) % TRAIL_LEN;
+        if ((trail[a].x == 0 && trail[a].y == 0) ||
+            (trail[b].x == 0 && trail[b].y == 0)) continue;
+
+        float thickness = is_transient
+            ? BEZIER_SIZE * (1.0f + (1.0f - (float)i / TRAIL_LEN) * 3.0f)
+            : BEZIER_SIZE;
+
+        Color c = { NERV_MAP_ORANGE.r, NERV_MAP_ORANGE.g,
+                    NERV_MAP_ORANGE.b, 255 };
+        DrawLineBezier(trail[a], trail[b], thickness, c);
+    }
+}
+
+// Debug: draw the bounding rect so you can see the field
+static void draw_rect_bounds(Vector2 origin, float rect_w, float rect_h) // AI
+{
+    Rectangle r = {
+        .x      = origin.x - rect_w * 0.5f,
+        .y      = origin.y - rect_h * 0.5f,
+        .width  = rect_w,
+        .height = rect_h,
+    };
+    DrawRectangleLinesEx(r, 1, (Color){ NERV_MAP_ORANGE.r,
+                                        NERV_MAP_ORANGE.g,
+                                        NERV_MAP_ORANGE.b, 40 });
+}
+
+void draw_angle(Sample *s, int width, int height, Color *colors) // AI
+{
+    (void)s; (void)colors;
+
+    PeakBin    peak   = find_peak_bin();
+    PhaseState phase  = smooth_phase(peak.re, peak.im);
+    float      mag_n  = normalize_mag(phase.raw_mag, phase.smooth_mag, &PEAK_SAMPLE);
+
+    // Rectangle is 60% of the shorter screen dimension
+    float rect_w = fminf(width, height) * 0.6f;
+    float rect_h = fminf(width, height) * 0.45f;
+
+    Vector2  origin    = { width / 2.0f, height / 2.0f };
+    RectState rs       = compute_rect_tip(origin, phase.phase, mag_n,
+                                          phase.raw_mag, rect_w, rect_h);
+
+    int            trail_head;
+    const Vector2 *trail = update_trail(rs.tip, &trail_head);
+
+    draw_rect_trail(trail, trail_head, rs.is_transient);
+    draw_needle(rs.tip);
+
+    FFT_RADIUS = (int)(rect_w * 0.5f);
+    TIP_X      = rs.tip.x;
+    TIP_Y      = rs.tip.y;
+    ANGEL      = (phase.raw_mag > 20) ? 1 : 0;
 }
 //[=======================================================================================================================================]]
+//[=======================================================================================================================================]]
+//[=======================================================================================================================================]]
+
 void draw_l()
 {
     Vec2 v0 = {
@@ -497,12 +589,13 @@ void draw_l()
         .x = BOUND_LEFT,
         .y = BOUND_LEFT - TIP_Y};
     DrawLineBezier(v0, v1, BEZIER_SIZE, NERV_MAP_ORANGE);
+    ANGEL = (v1.y > RES_Y/2) ? 1 : 0;
 }
 void draw_r()
 {
     Vec2 v0 = {
         .x = BOUND_RIGHT,
-        .y = BOUND_RIGHT - TIP_Y};
+        .y =  BOUND_RIGHT - TIP_Y};
     Vec2 v1 = {
         .x = RES_X,
         .y = RES_Y - RES_Y / 9};
@@ -601,7 +694,6 @@ void draw_overlay(int width, int height) //, int FFT_RADIUS)
 
 void draw_cover(Vec2 pos, float width, float height, Color bar_c, Color backg_c)
 {
-
     float scroll_speed = height * 0.15f;
     static float pos_y = 0.0f;
     pos_y -= scroll_speed * GetFrameTime();
@@ -690,7 +782,95 @@ void draw_signals()
     draw_l();
     draw_r();
 }
-void _draw(Font fonts[])
+void draw_song_time(Music* audio_file, Font clock_font)
+{
+    Color clock_color = ANGEL ? NERV_INTERFACE_BLUE : NERV_ALERT_RED;
+    Vec2 pos = 
+    {
+        .x = RES_X*.85,
+        .y = RES_Y*.75
+    };
+    Rectangle r = {
+        .width = RES_X*.1,
+        .height = RES_Y*.1,
+        .x = pos.x,
+        .y = pos.y
+    };
+    Vec2 tri_tip = {
+        .x = pos.x - r.width/3,
+        .y = pos.y + r.height/2
+    };
+    Vec2 tri_1 = {
+        .x = pos.x,
+        .y = pos.y + r.height
+    };
+    DrawRectangleRec(r, clock_color);
+    DrawTriangle(pos, tri_tip, tri_1, clock_color);
+    Vec2 tri_0 = {
+        .x = pos.x + r.width,
+        .y = pos.y
+    };
+    tri_1 = (Vec2){
+        .x = pos.x + r.width,
+        .y = pos.y + r.height
+    };
+
+    tri_tip = (Vec2){
+        .x = tri_0.x + r.width/3,
+        .y = tri_0.y + r.height/2
+    };
+    DrawTriangle(tri_0, tri_1, tri_tip, clock_color);
+
+    // get song length & position (keep as float for precision)
+    float song_length = GetMusicTimeLength(*audio_file);
+    float song_position = GetMusicTimePlayed(*audio_file);
+
+    // Better time format (MM:SS) - highly recommended
+    int milis   = (int)(song_position * 1000) % 1000;
+    int min_pos = (int)song_position / 60;
+    int sec_pos = (int)song_position % 60;
+    int min_len = (int)song_length / 60;
+    int sec_len = (int)song_length % 60;
+    char* time_str = TextFormat("%02d:%02d:%02d: / %02d:%02d", min_pos, sec_pos, milis, min_len, sec_len);
+
+    // === TEXT SIZING & CENTERING ===
+    float spacing = 2.0f;
+    float time_size = r.height * 0.95f;      // a bit smaller than full height so it fits nicely
+
+    Vector2 time_measured = MeasureTextEx(clock_font, time_str, time_size, spacing);
+
+    // Auto-shrink if too wide
+    if (time_measured.x > r.width * 0.95f)
+    {
+        time_size *= (r.width * 0.95f) / time_measured.x;
+        time_measured = MeasureTextEx(clock_font, time_str, time_size, spacing); // re-measure!
+    }
+
+    // Proper center (top-left of text = center of rectangle minus half text size)
+    Vector2 time_pos = {
+        .x = r.x + (r.width  - time_measured.x) / 2.0f,
+        .y = r.y + (r.height - time_measured.y) / 2.0f
+    };
+
+    DrawTextEx(clock_font, time_str, time_pos, time_size, spacing, BLACK);
+}
+void draw_psycho_lable(Font font) 
+{
+    DrawTextEx(font, "PSYCHOGRAPHIC DISPLAY", (Vec2){RES_X *.14, RES_Y*.1}, RES_Y / 35, 0.0f, NERV_MAGI_AMBER);
+    DrawRectangleRoundedLines(
+        (Rectangle){
+            .width = RES_X*.23, 
+            .height = RES_Y*.1, 
+            .x = RES_X*.135, 
+            .y = RES_Y*.07}, 
+            0.5f, 
+            4, 
+            NERV_MAGI_AMBER
+        );
+}
+
+
+void _draw(Font fonts[], Music* audio_file)
 {
     Vec2 header = {
         .x = RES_X,
@@ -704,9 +884,13 @@ void _draw(Font fonts[])
         .y = 0};
     draw_signals();
     draw_axis(RES_X, RES_Y, 5, NERV_MAGI_AMBER);
+
+
     draw_overlay(RES_X - RES_X / 4, RES_Y);
     draw_angel_warning(ANGEL, fonts[MAT_CLASSIC], fonts[JP_MAT_CLASSIC]);
-    // draw_song_name();
+    draw_song_time(audio_file, fonts[BOLD_DS_DIGITAL]);
+    
+    draw_psycho_lable(fonts[MAT_PRO_EB]);
 
     // draw_header(header, RES_X, RES_Y / 9, EVA_02_RED, NERV_MAGI_AMBER);
     //  draw_grid_bars_slants((Vec2){RES_X/2-RES_X*0.5f, RES_Y-RES_Y*0.5f});

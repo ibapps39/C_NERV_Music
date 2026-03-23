@@ -15,4 +15,4 @@ putAudioFileHere/*.mp3
 
 .DS_Store
 NERV_Visualizer
-
+/NERV_Visualizer
