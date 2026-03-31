@@ -13,13 +13,13 @@
 // DEFAULTS, CONSTANTS, & MACROS
 
 #define DEFAULT_BOTTOM_SCREEN DEFAULT_WINDOW_Y
-#define DEFAULT_CENTER_SCREEN (Vector2){.x = DEFAULT_WINDOW_X / 2, .y = DEFAULT_WINDOW_Y / 2}
+#define DEFAULT_CENTER_SCREEN (Vec2){.x = DEFAULT_WINDOW_X / 2, .y = DEFAULT_WINDOW_Y / 2}
 #define DEFAULT_FPS 60
-#define DEFAULT_MAP_VECTOR2D \
-    (Vector2) { DEFAULT_MAP_SIZE_X, DEFAULT_MAP_SIZE_Y }
+#define DEFAULT_MAP_Vec2D \
+    (Vec2) { DEFAULT_MAP_SIZE_X, DEFAULT_MAP_SIZE_Y }
 #define DEFAULT_PLAYER_COLOR (Color){.r = 0, .g = 255, .b = 0, .a = 255}
 #define DEFAULT_PLAYER_SIZE \
-    (Vector2) { .x = .0333 * DEFAULT_WINDOW_X, .y = .0667 * DEFAULT_WINDOW_Y }
+    (Vec2) { .x = .0333 * DEFAULT_WINDOW_X, .y = .0667 * DEFAULT_WINDOW_Y }
 #define DEFAULT_RESOLUTION ((int)DEFAULT_WINDOW_X * (int)DEFAULT_WINDOW_Y)
 #define DEFAULT_WINDOW_X 600
 #define DEFAULT_WINDOW_Y 700
@@ -102,7 +102,6 @@ typedef struct Sample
 Sample g_sample = {0};
 static Complex g_fft_bins[FFT_SIZE]; // persistent, no alloc per frame
 
-
 typedef enum FONTS
 {
     MAT_PRO_EB,
@@ -126,7 +125,7 @@ typedef struct { // AI
 } PhaseState;
 
 typedef struct RectState{ // AI
-    Vector2 tip;
+    Vec2 tip;
     bool    is_transient;
 } RectState;
 
@@ -136,6 +135,7 @@ typedef struct RectState{ // AI
 
 // Globals
 // this should all be a struct, but we ball
+int ALERT = 0;
 int RES_X, RES_Y, TIME;
 int DEFAULT_SAMPLE_RATE = 44100;
 float BOUND_LEFT;
@@ -292,6 +292,13 @@ void window_monitor(bool is_resized)
     }
     DT = GetFrameTime();
 }
+void shader_monitor(RenderTexture2D* target_shader)
+{
+    if(IsWindowResized()){
+        UnloadRenderTexture(*target_shader);
+        *target_shader = LoadRenderTexture(RES_X, RES_Y);
+    }
+}
 //[=======================================================================================================================================
 // Processing
 void initSignal(Signal *s, float frequency, float amplitude, Wave_f func, float sample_rate)
@@ -420,12 +427,12 @@ static float compute_radius(int width, int height) // AI
     return r * (1.0f + 0.018f * sinf(0.7f));
 }
 
-static Vector2 compute_tip(Vector2 origin, float phase,
+static Vec2 compute_tip(Vec2 origin, float phase,
                             float mag_normalized, float radius) // AI
 {
     float needle_len = radius * mag_normalized;
     float noise      = 0.01f * radius * (sinf(1.3f) + cosf(0.9f));
-    return (Vector2){
+    return (Vec2){
         .x = origin.x + cosf(phase) * needle_len,
         .y = origin.y - sinf(phase) * (needle_len + noise),
     };
@@ -433,10 +440,10 @@ static Vector2 compute_tip(Vector2 origin, float phase,
 
 // Returns a read-only view of the circular trail buffer.
 // (trail_head is also out so callers can iterate in order.)
-static const Vector2 *update_trail(Vector2 tip, int *out_head) // AI
+static const Vec2 *update_trail(Vec2 tip, int *out_head) // AI
 {
-    static Vector2 trail[TRAIL_LEN] = {0};
-    static int     trail_head       = 0;
+    static Vec2 trail[TRAIL_LEN] = {0};
+    static int     trail_head    = 0;
 
     trail[trail_head] = tip;
     trail_head        = (trail_head + 1) % TRAIL_LEN;
@@ -444,17 +451,17 @@ static const Vector2 *update_trail(Vector2 tip, int *out_head) // AI
     return trail;
 }
 
-static void draw_needle(Vector2 tip) // AI
+static void draw_needle(Vec2 tip) // AI
 {
-    Vector2 left  = { BOUND_LEFT,  BOUND_LEFT  - tip.y };
-    Vector2 right = { BOUND_RIGHT, BOUND_RIGHT - tip.y };
+    Vec2 left  = { BOUND_LEFT,  BOUND_LEFT  - tip.y };
+    Vec2 right = { BOUND_RIGHT, BOUND_RIGHT - tip.y };
     DrawLineBezier(left,  tip, BEZIER_SIZE, NERV_MAP_ORANGE);
     DrawLineBezier(right, tip, BEZIER_SIZE, NERV_MAP_ORANGE);
 }
 
 // Maps phase [-π, π] and mag_normalized [0,1] onto a rectangle's interior.
 // Phase → X axis, mag → Y axis, with an edge-snap on loud hits.
-static RectState compute_rect_tip(Vector2 origin, float phase,
+static RectState compute_rect_tip(Vec2 origin, float phase,
                                    float mag_normalized, float raw_mag,
                                    float rect_w, float rect_h) // AI
 {
@@ -509,7 +516,7 @@ static RectState compute_rect_tip(Vector2 origin, float phase,
     }
 
     return (RectState){
-        .tip = (Vector2){
+        .tip = (Vec2){
             .x = origin.x + out_x,
             .y = origin.y + out_y,
         },
@@ -517,7 +524,7 @@ static RectState compute_rect_tip(Vector2 origin, float phase,
     };
 }
 
-static void draw_rect_trail(const Vector2 *trail, int head, bool is_transient) // AI
+static void draw_rect_trail(const Vec2 *trail, int head, bool is_transient) // AI
 {
     for (int i = 0; i < TRAIL_LEN - 1; i++) {
         int a = (head + i)     % TRAIL_LEN;
@@ -536,7 +543,7 @@ static void draw_rect_trail(const Vector2 *trail, int head, bool is_transient) /
 }
 
 // Debug: draw the bounding rect so you can see the field
-static void draw_rect_bounds(Vector2 origin, float rect_w, float rect_h) // AI
+static void draw_rect_bounds(Vec2 origin, float rect_w, float rect_h) // AI
 {
     Rectangle r = {
         .x      = origin.x - rect_w * 0.5f,
@@ -561,12 +568,12 @@ void draw_angle(Sample *s, int width, int height, Color *colors) // AI
     float rect_w = fminf(width, height) * 0.6f;
     float rect_h = fminf(width, height) * 0.45f;
 
-    Vector2  origin    = { width / 2.0f, height / 2.0f };
+    Vec2  origin    = { width / 2.0f, height / 2.0f };
     RectState rs       = compute_rect_tip(origin, phase.phase, mag_n,
                                           phase.raw_mag, rect_w, rect_h);
 
     int            trail_head;
-    const Vector2 *trail = update_trail(rs.tip, &trail_head);
+    const Vec2 *trail = update_trail(rs.tip, &trail_head);
 
     draw_rect_trail(trail, trail_head, rs.is_transient);
     draw_needle(rs.tip);
@@ -620,10 +627,10 @@ void draw_parallelogram_para(Parallelogram p, Color color)
     float h = p.height;
     float s = p.skew;
 
-    Vector2 p1 = {x, y};
-    Vector2 p2 = {x + w, y};
-    Vector2 p3 = {x + w + s, y + h};
-    Vector2 p4 = {x + s, y + h};
+    Vec2 p1 = {x, y};
+    Vec2 p2 = {x + w, y};
+    Vec2 p3 = {x + w + s, y + h};
+    Vec2 p4 = {x + s, y + h};
 
     DrawTriangle(p1, p4, p3, color); // left triangle  (CCW)
     DrawTriangle(p1, p3, p2, color); // right triangle (CCW)
@@ -740,7 +747,7 @@ void draw_angel_warning(int warning, Font f_eng, Font f_jap)
 
     // Start at a guess, then scale to fit width
     float jp_size = target_h;
-    Vector2 jp_measured = MeasureTextEx(f_jap, "天使", jp_size, 0);
+    Vec2 jp_measured = MeasureTextEx(f_jap, "天使", jp_size, 0);
     if (jp_measured.x > target_w)
         jp_size *= target_w / jp_measured.x; // shrink to fit width
 
@@ -752,7 +759,7 @@ void draw_angel_warning(int warning, Font f_eng, Font f_jap)
 
     // --- fit ENG text to bottom half ---
     float eng_size = target_h;
-    Vector2 eng_measured = MeasureTextEx(f_eng, "Angle", eng_size, 0);
+    Vec2 eng_measured = MeasureTextEx(f_eng, "Angle", eng_size, 0);
     if (eng_measured.x > target_w)
         eng_size *= target_w / eng_measured.x;
 
@@ -837,7 +844,7 @@ void draw_song_time(Music* audio_file, Font clock_font)
     float spacing = 2.0f;
     float time_size = r.height * 0.95f;      // a bit smaller than full height so it fits nicely
 
-    Vector2 time_measured = MeasureTextEx(clock_font, time_str, time_size, spacing);
+    Vec2 time_measured = MeasureTextEx(clock_font, time_str, time_size, spacing);
 
     // Auto-shrink if too wide
     if (time_measured.x > r.width * 0.95f)
@@ -847,30 +854,229 @@ void draw_song_time(Music* audio_file, Font clock_font)
     }
 
     // Proper center (top-left of text = center of rectangle minus half text size)
-    Vector2 time_pos = {
+    Vec2 time_pos = {
         .x = r.x + (r.width  - time_measured.x) / 2.0f,
         .y = r.y + (r.height - time_measured.y) / 2.0f
     };
 
     DrawTextEx(clock_font, time_str, time_pos, time_size, spacing, BLACK);
 }
-void draw_psycho_lable(Font font) 
+void draw_lable(Font font, const char* text) 
 {
-    DrawTextEx(font, "PSYCHOGRAPHIC DISPLAY", (Vec2){RES_X *.14, RES_Y*.1}, RES_Y / 35, 0.0f, NERV_MAGI_AMBER);
-    DrawRectangleRoundedLines(
-        (Rectangle){
-            .width = RES_X*.23, 
-            .height = RES_Y*.1, 
-            .x = RES_X*.135, 
-            .y = RES_Y*.07}, 
-            0.5f, 
-            4, 
-            NERV_MAGI_AMBER
-        );
-}
+    float font_size = (DWR < 0.5) ? RES_Y / (35.0f) : RES_Y / (35.0f*1+DWR);
+    //printf("%f\n", DWR);
+    Vec2 textSize = MeasureTextEx(font, text, font_size, 0.0f);
+    
+    Vec2 font_pos = (DWR < 0.5) ? (Vec2){RES_X * 0.135f, RES_Y * 0.1f} :  (Vec2){RES_X * 0.135f-DWR, RES_Y * 0.1f};
+    
+    float padding_x = RES_X * 0.001f; 
+    float padding_y = RES_Y * 0.005f;
 
+    Rectangle text_rect = 
+    {
+        .x = font_pos.x - padding_x, 
+        .y = font_pos.y - padding_y, 
+        .width = textSize.x + (padding_x * 2), 
+        .height = textSize.y + (padding_y * 2)
+    };
+    DrawRectangleRoundedLines(
+        text_rect, 
+        0.5f, 
+        4, 
+        NERV_MAGI_AMBER
+    );
+    DrawTextEx(font, text, font_pos, font_size, 0.0f, NERV_MAGI_AMBER);
+}
+#define SQRT_THREE 1.7321
+void draw_hex_back(int res_x, int res_y, Font f)
+{
+    float hex_radius = 40.0f * fmaxf(1.0f, fmaxf(DWR/2, DHR/2));
+    float hex_width  = hex_radius * 2.0f;
+    float bound_x    = res_x + hex_radius;
+    float bound_y    = res_y + hex_radius;
+    Color hex_c      = { 255, 0, 0, 90 }; // RED with alpha
+    float t          = GetTime() * 90.0f;
+    
+    // Better blinking logic: toggle every 0.5 seconds
+    Color text_c = ((int)(GetTime() * 2) % 2 == 0) ? NERV_MAGI_AMBER : WHITE;
+
+    for (int i = 0; i < 100; i++) 
+    {
+        float x, y;
+        
+        // Calculate positions based on i
+        if (i % 9 == 0) {
+            x = fmodf(i * hex_width - t/10, bound_x);
+            y = fmodf(i * hex_width + t/10, bound_y);
+        } else if (i % 10 == 0) {
+            x = fmodf(i * hex_width + t, bound_x);
+            y = fmodf(i * hex_width - t, bound_y);
+        } else {
+            x = fmodf(i * hex_width + t*1.5, bound_x);
+            y = fmodf(i * hex_width + t*1.5, bound_y);
+        }
+
+        Vector2 center = { x, y };
+        int fontSize = hex_radius * 0.4f;
+
+        // 1. Draw the Hexagon
+        DrawPoly(center, 6, hex_radius, 0, hex_c);
+        DrawPolyLines(center, 6, hex_radius * 1.1f, 0, MAROON);
+
+        // 2. Draw the Text centered on the Hex
+        // We subtract half the text width/height to center it properly
+        const char* label = "ALERT";
+        int textWidth = MeasureText(label, fontSize);
+        DrawText(label, x - (textWidth / 2), y - (fontSize / 2), fontSize, text_c);
+    }
+}
+#define MAX_MOUSE_PTS 300
+void expir_draw(Vec2* pts, int i) 
+{
+    for(int j = 0; j+1 < i; j++) 
+    {
+        DrawLine(pts[j].x, pts[j].y, pts[j+1].x, pts[j+1].y, NERV_MAGI_AMBER);
+    }
+}
+void expir(int res_x, int res_y, Vec2* pts) 
+{
+    if (GetTime() < 1.0f) return;
+    Vec2 md = GetMouseDelta();
+    static int i = 0;
+    expir_draw(pts, i);
+    if((md.x < 1 && md.y < 1 || i+1 > MAX_MOUSE_PTS) ) return;
+    Vec2 v = GetMousePosition();
+    if (v.x < 10 && v.y < 10) return;
+    if (GetTime() < 1.0f)
+    {
+        pts[0].x = v.x;
+        pts[0].y = v.y;
+        pts[1].x = v.x+1;
+        pts[1].y = v.y+1;
+        i = 1;
+        return;
+    }
+    pts[i].x = v.x;
+    pts[i].y = v.y;
+    i++;
+    // if mouse clicked and i+1 > MAX_MOUSE_PTS, reset i
+    // would it ever reach this point this though?
+    if(i+1 > MAX_MOUSE_PTS) {
+        i = 0;
+    }
+}
+void draw_get_in_the_bot(Font f)
+{
+    if(g_sample.samples[0] == 0) return;
+    float font_size = RES_Y / (15.0f);
+    const char* text = "GET IN THE FUCKING ROBOT SHINJI";
+    Vec2 placement = {
+        .x = RES_X * 0.2f,
+        .y = RES_Y * 0.8f
+    };
+    static float time = 5.0f;
+    if (GetTime() < time) { DrawTextPro(f, text, placement, (Vec2){0}, 0.0f, font_size, 0, WHITE); time--; }
+}
+void draw_sync_align_back(int res_x, int res_y, Vec2* list, int max_points)
+{
+    int thickness = 4; 
+    // float time = GetTime();
+    static float st = 0;
+    float offset_x = 0;
+    float width = (res_x) - offset_x;
+    float offset_y = res_y / 2.0f; // k
+    
+    // 1. Move frequency OUTSIDE the loop so the line is cohesive
+    // This gives us one stable frequency for the whole line this frame
+    float freq = 1.0f; 
+    float amp = res_y*.6;
+    float time = GetTime();
+    for (size_t i = 0; i < max_points; i++)
+    {
+        // 2. Normalize t (0.0 to 1.0)
+        float t = (float)i / (float)(max_points - 1);
+
+        // 3. The Envelope (The "Volume Knob")
+        // This ensures y is always 0 at the start and end
+        float envelope = 4.0f * t * (1.0f - t);
+
+        // 4. The Wave
+        float wave = sinf(2.0f * PI * freq * t + st);
+
+        // 5. Combine: y = (Envelope * Wave * Amplitude) + Offset
+        list[i].x = offset_x + (t * width);
+        list[i].y = (envelope * wave * amp) + offset_y;
+    }
+
+    float converge_time = 21.5f;
+    float passed = time/converge_time;
+    float initial_offset_x = res_x*0.1f;
+    float lo = .15*initial_offset_x;
+    float multiplier = fmaxf(0.0f, 1-passed);
+    float converge_off = multiplier*initial_offset_x;
+
+    if (multiplier == 0) st+=time;
+    if (multiplier == 0 && ALERT < 1 && GetTime() > 30) ALERT = 1; 
+    for (size_t i = 0; i < max_points - 1; i++)
+    {
+        DrawLineBezier(list[i], list[i+1], 4, !converge_off ?  BLUE : NERV_MAGI_AMBER);
+        Vec2 l = (Vec2){
+            .x = list[i].x + lo,
+            .y = list[i].y
+        };
+        Vec2 ll = (Vec2){
+            .x = list[i+1].x + lo,
+            .y = list[i+1].y
+        };
+        DrawLineBezier(l, ll, 4, !converge_off ?  BLUE : NERV_MAGI_AMBER);
+        Vec2 l1 = (Vec2){
+            .x = list[i].x + converge_off,
+            .y = list[i].y
+        };
+        Vec2 l2 = (Vec2){
+            .x = list[i+1].x + converge_off,
+            .y = list[i+1].y
+        };
+        DrawLineBezier(l1, l2, 4, !converge_off ? BLUE : EVA_00_ORANGE);
+        Vec2 l3 = (Vec2){
+            .x = list[i].x + converge_off+lo,
+            .y = list[i].y
+        };
+        Vec2 l4 = (Vec2){
+            .x = list[i+1].x + converge_off+lo,
+            .y = list[i+1].y
+        };
+        DrawLineBezier(l3, l4, 4, !converge_off ? BLUE : EVA_00_ORANGE);
+        Vec2 l5 = (Vec2){
+            .x = list[i].x + converge_off+lo*2,
+            .y = list[i].y
+        };
+        Vec2 l6 = (Vec2){
+            .x = list[i+1].x + converge_off+lo*2,
+            .y = list[i+1].y
+        };
+        DrawLineBezier(l5, l6, 4, !converge_off ? BLUE : EVA_00_ORANGE);
+
+        if((int)l.x % 4 == 0) DrawLine(l.x, l.y, l6.x, l6.y, GREEN);
+        if((int)ll.x % 5 == 0) DrawLine(ll.x, l.y, l2.x, l2.y, PURPLE);
+        if((int)ll.x % 6 == 0) DrawLine(ll.x, l.y, l2.x, l2.y, PINK);
+    }
+}
 void _draw(Font fonts[], Music* audio_file)
 {
+    if ((GetTime() > 21.5) && (GetTime() < 30) ) draw_hex_back(RES_X, RES_Y,  fonts[MAT_CLASSIC]);
+    static bool init = 0;
+    const int max_trail_l = 350;
+    Vec2 sin_trail[max_trail_l];
+    if (!init)
+    {
+        for (size_t i = 0; i < max_trail_l; i++)
+        {
+            sin_trail[i] = (Vec2){0};
+        }
+        init++;
+    }
+    if (!ALERT) draw_sync_align_back(RES_X, RES_Y, sin_trail, max_trail_l);
     Vec2 header = {
         .x = RES_X,
         .y = 0,
@@ -881,15 +1087,19 @@ void _draw(Font fonts[], Music* audio_file)
     Vec2 cover_r = {
         .x = BOUND_RIGHT,
         .y = 0};
-    draw_signals();
+    if(ALERT) draw_signals();
     draw_axis(RES_X, RES_Y, 5, NERV_MAGI_AMBER);
 
 
     draw_overlay(RES_X - RES_X / 4, RES_Y);
     draw_angel_warning(ANGEL, fonts[MAT_CLASSIC], fonts[JP_MAT_CLASSIC]);
     draw_song_time(audio_file, fonts[BOLD_DS_DIGITAL]);
+    if(!ALERT) { draw_lable(fonts[MAT_PRO_EB], "SYNC RATE"); } else {draw_lable(fonts[MAT_PRO_EB], "PYSCHOGRAPHIC DISPLAY");}
+    draw_get_in_the_bot(fonts[MAT_PRO_EB]);
+
+    // static Vec2 expir_pir[MAX_MOUSE_PTS];
+    // expir(RES_X, RES_Y, expir_pir);
     
-    draw_psycho_lable(fonts[MAT_PRO_EB]);
 
     // draw_header(header, RES_X, RES_Y / 9, EVA_02_RED, NERV_MAGI_AMBER);
     //  draw_grid_bars_slants((Vec2){RES_X/2-RES_X*0.5f, RES_Y-RES_Y*0.5f});
