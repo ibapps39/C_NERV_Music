@@ -869,7 +869,6 @@ void draw_psycho_lable(Font font)
         );
 }
 
-
 void _draw(Font fonts[], Music* audio_file)
 {
     Vec2 header = {
