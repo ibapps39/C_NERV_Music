@@ -48,7 +48,7 @@ int main(void)
         .width = RES_X,
         .height = -RES_Y,
     };
-        TIME += GetFrameTime();
+        if (IsKeyDown(KEY_F)) SeekMusicStream(audio_file, (GetTime())+5.0f);
         BOUND_LEFT = RES_X / 2.0f - RES_X / 2.0f * 0.3f;
         BOUND_RIGHT = BOUND_LEFT * 2;
         window_monitor(IsWindowResized());

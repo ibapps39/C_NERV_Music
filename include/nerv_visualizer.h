@@ -31,6 +31,8 @@
 #define FALSE 0
 #define TRAIL_LEN 200
 #define BEZIER_SIZE 2
+#define SQRT_THREE 1.7321
+#define MAX_MOUSE_PTS 300
 
 // [=======================================================================================================================================]
 //  NERV COLORS
@@ -92,7 +94,7 @@ typedef struct Signal
     Wave_f signature;
 } Signal;
 // structurre
-typedef struct { float re, im; } Complex;
+typedef struct Complex { float re, im; } Complex;
 typedef struct Sample
 {
     float samples[FFT_SIZE]; // Precomputed samples for one second of audio at the given frequency
@@ -759,18 +761,18 @@ void draw_angel_warning(int warning, Font f_eng, Font f_jap)
 
     // --- fit ENG text to bottom half ---
     float eng_size = target_h;
-    Vec2 eng_measured = MeasureTextEx(f_eng, "Angle", eng_size, 0);
+    Vec2 eng_measured = MeasureTextEx(f_eng, "Angel", eng_size, 0);
     if (eng_measured.x > target_w)
         eng_size *= target_w / eng_measured.x;
 
-    eng_measured = MeasureTextEx(f_eng, "Angle", eng_size, 0);
+    eng_measured = MeasureTextEx(f_eng, "Angel", eng_size, 0);
     Vec2 eng_pos = {
         .x = r.x + (r.width - eng_measured.x) / 2.0f, // centered
         .y = r.y + r.height * 0.5f
     };
 
     DrawTextEx(f_jap, "天使", jp_pos, jp_size, 0, r_color);
-    DrawTextEx(f_eng, "Angle", eng_pos, eng_size, 0, r_color);
+    DrawTextEx(f_eng, "Angel", eng_pos, eng_size, 0, r_color);
 }
 void play_angle_warning_sound(int warning, Sound* sound) {
     if (!warning) return;
@@ -887,50 +889,34 @@ void draw_lable(Font font, const char* text)
     );
     DrawTextEx(font, text, font_pos, font_size, 0.0f, NERV_MAGI_AMBER);
 }
-#define SQRT_THREE 1.7321
+
 void draw_hex_back(int res_x, int res_y, Font f)
 {
-    float hex_radius = 40.0f * fmaxf(1.0f, fmaxf(DWR/2, DHR/2));
+    float hex_radius = 40.0f * fmaxf(1.0f, fmaxf(DWR / 2, DHR / 2));
     float hex_width  = hex_radius * 2.0f;
     float bound_x    = res_x + hex_radius;
     float bound_y    = res_y + hex_radius;
-    Color hex_c      = { 255, 0, 0, 90 }; // RED with alpha
     float t          = GetTime() * 90.0f;
-    
-    // Better blinking logic: toggle every 0.5 seconds
-    Color text_c = ((int)(GetTime() * 2) % 2 == 0) ? NERV_MAGI_AMBER : WHITE;
+    int   font_size  = (int)(hex_radius * 0.4f);
+    Color hex_c      = { 255, 0, 0, 90 };
+    Color text_c     = ((int)(GetTime() * 2) % 2 == 0) ? NERV_MAGI_AMBER : WHITE;
 
-    for (int i = 0; i < 100; i++) 
+    for (int i = 0; i < 100; i++)
     {
         float x, y;
-        
-        // Calculate positions based on i
-        if (i % 9 == 0) {
-            x = fmodf(i * hex_width - t/10, bound_x);
-            y = fmodf(i * hex_width + t/10, bound_y);
-        } else if (i % 10 == 0) {
-            x = fmodf(i * hex_width + t, bound_x);
-            y = fmodf(i * hex_width - t, bound_y);
-        } else {
-            x = fmodf(i * hex_width + t*1.5, bound_x);
-            y = fmodf(i * hex_width + t*1.5, bound_y);
-        }
+        if      (i % 9  == 0) { x = fmodf(i * hex_width - t / 10,  bound_x); y = fmodf(i * hex_width + t / 10,  bound_y); }
+        else if (i % 10 == 0) { x = fmodf(i * hex_width + t,        bound_x); y = fmodf(i * hex_width - t,        bound_y); }
+        else                  { x = fmodf(i * hex_width + t * 1.5f,  bound_x); y = fmodf(i * hex_width + t * 1.5f, bound_y); }
 
-        Vector2 center = { x, y };
-        int fontSize = hex_radius * 0.4f;
+        Vector2 center    = { x, y };
+        int     text_width = MeasureText("ALERT", font_size);
 
-        // 1. Draw the Hexagon
         DrawPoly(center, 6, hex_radius, 0, hex_c);
         DrawPolyLines(center, 6, hex_radius * 1.1f, 0, MAROON);
-
-        // 2. Draw the Text centered on the Hex
-        // We subtract half the text width/height to center it properly
-        const char* label = "ALERT";
-        int textWidth = MeasureText(label, fontSize);
-        DrawText(label, x - (textWidth / 2), y - (fontSize / 2), fontSize, text_c);
+        DrawText("ALERT", x - text_width / 2, y - font_size / 2, font_size, text_c);
     }
 }
-#define MAX_MOUSE_PTS 300
+
 void expir_draw(Vec2* pts, int i) 
 {
     for(int j = 0; j+1 < i; j++) 
@@ -974,24 +960,14 @@ void draw_get_in_the_bot(Font f)
         .x = RES_X * 0.2f,
         .y = RES_Y * 0.8f
     };
-    static float time = 5.0f;
+    static float time = 10.0f;
     if (GetTime() < time) { DrawTextPro(f, text, placement, (Vec2){0}, 0.0f, font_size, 0, WHITE); time--; }
 }
-void draw_sync_align_back(int res_x, int res_y, Vec2* list, int max_points)
+void envelope(float res_y, int max_points, Vec2* list, float offset_x, float offset_y, float width, float* static_t)
 {
-    int thickness = 4; 
-    // float time = GetTime();
-    static float st = 0;
-    float offset_x = 0;
-    float width = (res_x) - offset_x;
-    float offset_y = res_y / 2.0f; // k
-    
-    // 1. Move frequency OUTSIDE the loop so the line is cohesive
-    // This gives us one stable frequency for the whole line this frame
     float freq = 1.0f; 
     float amp = res_y*.6;
-    float time = GetTime();
-    for (size_t i = 0; i < max_points; i++)
+        for (size_t i = 0; i < max_points; i++)
     {
         // 2. Normalize t (0.0 to 1.0)
         float t = (float)i / (float)(max_points - 1);
@@ -1001,107 +977,77 @@ void draw_sync_align_back(int res_x, int res_y, Vec2* list, int max_points)
         float envelope = 4.0f * t * (1.0f - t);
 
         // 4. The Wave
-        float wave = sinf(2.0f * PI * freq * t + st);
+        float wave = sinf(2.0f * PI * freq * t + *static_t);
 
         // 5. Combine: y = (Envelope * Wave * Amplitude) + Offset
         list[i].x = offset_x + (t * width);
         list[i].y = (envelope * wave * amp) + offset_y;
     }
+}
+void draw_sync_align_back(int res_x, int res_y, Vec2* list, int max_points)
+{
+    static float phase_acc = 0.0f;
+    float time         = GetTime();
+    float converge_off = fmaxf(0.0f, 1.0f - (time / 21.5f)) * res_x * 0.1f;
+    float lo           = res_x * 0.015f;
 
-    float converge_time = 21.5f;
-    float passed = time/converge_time;
-    float initial_offset_x = res_x*0.1f;
-    float lo = .15*initial_offset_x;
-    float multiplier = fmaxf(0.0f, 1-passed);
-    float converge_off = multiplier*initial_offset_x;
+    envelope(res_y, max_points, list, 0.0f, res_y / 2.0f, (float)res_x, &phase_acc);
 
-    if (multiplier == 0) st+=time;
-    if (multiplier == 0 && ALERT < 1 && GetTime() > 30) ALERT = 1; 
+    if (converge_off == 0.0f) phase_acc += time;
+    if (converge_off == 0.0f && ALERT < 1 && time > 30.0f) ALERT = 1;
+
+    Color amber_blue  = converge_off ? NERV_MAGI_AMBER : BLUE;
+    Color orange_blue = converge_off ? EVA_00_ORANGE   : BLUE;
+
     for (size_t i = 0; i < max_points - 1; i++)
     {
-        DrawLineBezier(list[i], list[i+1], 4, !converge_off ?  BLUE : NERV_MAGI_AMBER);
-        Vec2 l = (Vec2){
-            .x = list[i].x + lo,
-            .y = list[i].y
-        };
-        Vec2 ll = (Vec2){
-            .x = list[i+1].x + lo,
-            .y = list[i+1].y
-        };
-        DrawLineBezier(l, ll, 4, !converge_off ?  BLUE : NERV_MAGI_AMBER);
-        Vec2 l1 = (Vec2){
-            .x = list[i].x + converge_off,
-            .y = list[i].y
-        };
-        Vec2 l2 = (Vec2){
-            .x = list[i+1].x + converge_off,
-            .y = list[i+1].y
-        };
-        DrawLineBezier(l1, l2, 4, !converge_off ? BLUE : EVA_00_ORANGE);
-        Vec2 l3 = (Vec2){
-            .x = list[i].x + converge_off+lo,
-            .y = list[i].y
-        };
-        Vec2 l4 = (Vec2){
-            .x = list[i+1].x + converge_off+lo,
-            .y = list[i+1].y
-        };
-        DrawLineBezier(l3, l4, 4, !converge_off ? BLUE : EVA_00_ORANGE);
-        Vec2 l5 = (Vec2){
-            .x = list[i].x + converge_off+lo*2,
-            .y = list[i].y
-        };
-        Vec2 l6 = (Vec2){
-            .x = list[i+1].x + converge_off+lo*2,
-            .y = list[i+1].y
-        };
-        DrawLineBezier(l5, l6, 4, !converge_off ? BLUE : EVA_00_ORANGE);
+        Vec2 a = list[i];
+        Vec2 b = list[i + 1];
 
-        if((int)l.x % 4 == 0) DrawLine(l.x, l.y, l6.x, l6.y, GREEN);
-        if((int)ll.x % 5 == 0) DrawLine(ll.x, l.y, l2.x, l2.y, PURPLE);
-        if((int)ll.x % 6 == 0) DrawLine(ll.x, l.y, l2.x, l2.y, PINK);
+        Vec2 a_lo  = { a.x + lo,              a.y };
+        Vec2 b_lo  = { b.x + lo,              b.y };
+        Vec2 a_c   = { a.x + converge_off,         a.y };
+        Vec2 b_c   = { b.x + converge_off,         b.y };
+        Vec2 a_clo = { a.x + converge_off + lo,    a.y };
+        Vec2 b_clo = { b.x + converge_off + lo,    b.y };
+        Vec2 a_cl2 = { a.x + converge_off + lo*2,  a.y };
+        Vec2 b_cl2 = { b.x + converge_off + lo*2,  b.y };
+
+        DrawLineBezier(a,     b,     4, amber_blue);
+        DrawLineBezier(a_lo,  b_lo,  4, amber_blue);
+        DrawLineBezier(a_c,   b_c,   4, orange_blue);
+        DrawLineBezier(a_clo, b_clo, 4, orange_blue);
+        DrawLineBezier(a_cl2, b_cl2, 4, orange_blue);
+
+        if ((int)a_lo.x % 4 == 0) DrawLine(a_lo.x,  a_lo.y,  b_cl2.x, b_cl2.y, GREEN);
+        if ((int)b_lo.x % 5 == 0) DrawLine(b_lo.x,  a_lo.y,  b_c.x,   b_c.y,   PURPLE);
+        if ((int)b_lo.x % 6 == 0) DrawLine(b_lo.x,  a_lo.y,  b_c.x,   b_c.y,   PINK);
+        if ((int)b_lo.x % 7 == 0) DrawLine(a_clo.x, a_clo.y, b_clo.x, b_clo.y, PINK);
+        if ((int)b_lo.x % 8 == 0) DrawLine(a_cl2.x, a_cl2.y, b_cl2.x, b_cl2.y, PINK);
     }
 }
 void _draw(Font fonts[], Music* audio_file)
 {
-    if ((GetTime() > 21.5) && (GetTime() < 30) ) draw_hex_back(RES_X, RES_Y,  fonts[MAT_CLASSIC]);
-    static bool init = 0;
-    const int max_trail_l = 350;
-    Vec2 sin_trail[max_trail_l];
-    if (!init)
+    float now = GetTime();
+
+    if (now > 21.5f && now < 30.0f)
+        draw_hex_back(RES_X, RES_Y, fonts[MAT_CLASSIC]);
+
+    static bool initialized = false;
+    static Vec2 sin_trail[350];
+    if (!initialized)
     {
-        for (size_t i = 0; i < max_trail_l; i++)
-        {
-            sin_trail[i] = (Vec2){0};
-        }
-        init++;
+        for (size_t i = 0; i < 350; i++) sin_trail[i] = (Vec2){0};
+        initialized = true;
     }
-    if (!ALERT) draw_sync_align_back(RES_X, RES_Y, sin_trail, max_trail_l);
-    Vec2 header = {
-        .x = RES_X,
-        .y = 0,
-    };
-    Vec2 cover_l = {
-        .x = BOUND_LEFT,
-        .y = 0};
-    Vec2 cover_r = {
-        .x = BOUND_RIGHT,
-        .y = 0};
-    if(ALERT) draw_signals();
+
+    if (!ALERT) draw_sync_align_back(RES_X, RES_Y, sin_trail, 350);
+    if  (ALERT) draw_signals();
+
     draw_axis(RES_X, RES_Y, 5, NERV_MAGI_AMBER);
-
-
     draw_overlay(RES_X - RES_X / 4, RES_Y);
     draw_angel_warning(ANGEL, fonts[MAT_CLASSIC], fonts[JP_MAT_CLASSIC]);
     draw_song_time(audio_file, fonts[BOLD_DS_DIGITAL]);
-    if(!ALERT) { draw_lable(fonts[MAT_PRO_EB], "SYNC RATE"); } else {draw_lable(fonts[MAT_PRO_EB], "PYSCHOGRAPHIC DISPLAY");}
+    draw_lable(fonts[MAT_PRO_EB], ALERT ? "PYSCHOGRAPHIC DISPLAY" : "SYNC RATE");
     draw_get_in_the_bot(fonts[MAT_PRO_EB]);
-
-    // static Vec2 expir_pir[MAX_MOUSE_PTS];
-    // expir(RES_X, RES_Y, expir_pir);
-    
-
-    // draw_header(header, RES_X, RES_Y / 9, EVA_02_RED, NERV_MAGI_AMBER);
-    //  draw_grid_bars_slants((Vec2){RES_X/2-RES_X*0.5f, RES_Y-RES_Y*0.5f});
-    //   draw_scanlines(RES_X, RES_Y, 2, BLACK);
 }
