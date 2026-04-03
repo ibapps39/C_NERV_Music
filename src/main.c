@@ -4,16 +4,17 @@ int main(void)
     const int INITIAL_SCREEN_WIDTH = 700;
     const int INITIAL_SCREEN_HEIGHT = 400;
     const int INITIAL_FPS = 60;
-    SetConfigFlags(FLAG_MSAA_4X_HINT | FLAG_WINDOW_RESIZABLE);
-    //SetConfigFlags(FLAG_FULLSCREEN_MODE);
-    InitWindow(INITIAL_SCREEN_WIDTH, INITIAL_SCREEN_HEIGHT, "NERV Sine Monitor");
+    //SetConfigFlags(FLAG_MSAA_4X_HINT | FLAG_WINDOW_RESIZABLE | FLAG_FULLSCREEN_MODE);
+    SetConfigFlags(FLAG_FULLSCREEN_MODE);
+    //InitWindow(INITIAL_SCREEN_WIDTH, INITIAL_SCREEN_HEIGHT, "NERV Sine Monitor");
+    InitWindow(GetMonitorWidth(0), GetMonitorHeight(0), "NERV Sine Monitor");
     SetTargetFPS(INITIAL_FPS);
 
     Font fonts[6];
     int *cjk_ptr = NULL;
     int cp_count = 0;
-
     load_nerv_fonts(fonts, &cjk_ptr, &cp_count);
+
     Shader bloom_s = LoadShader(NULL, "resources/shaders/bloom.fs");
 
     
@@ -56,7 +57,7 @@ int main(void)
         music_switch(&is_playing, &audio_file);
         UpdateMusicStream(audio_file);
         play_angle_warning_sound(ANGEL, &alarm_tone);
-        
+
         BeginTextureMode(target);
         ClearBackground(OFF_BLACK);
         _draw(fonts, &audio_file);

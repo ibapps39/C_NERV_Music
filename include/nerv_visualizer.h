@@ -33,6 +33,7 @@
 #define BEZIER_SIZE 2
 #define SQRT_THREE 1.7321
 #define MAX_MOUSE_PTS 300
+#define ANGEL_LIMIT 20.0f
 
 // [=======================================================================================================================================]
 //  NERV COLORS
@@ -74,6 +75,7 @@ struct Vec2
 {
     float x, y, z;
 };
+// decouple from raylib
 typedef Vector2 Vec2;
 typedef struct Parallelogram
 {
@@ -94,7 +96,10 @@ typedef struct Signal
     Wave_f signature;
 } Signal;
 // structurre
-typedef struct Complex { float re, im; } Complex;
+typedef struct Complex
+{
+    float re, im;
+} Complex;
 typedef struct Sample
 {
     float samples[FFT_SIZE]; // Precomputed samples for one second of audio at the given frequency
@@ -114,21 +119,26 @@ typedef enum FONTS
     BOLD_DS_DIGITAL
 } FONTS;
 
-typedef struct { // AI
-    int   bin;
+typedef struct PeakBin
+{ // AI
+    int bin;
     float re, im;
     float mag;
 } PeakBin;
+float G_PEAKBIN_MAG;
 
-typedef struct { // AI
+typedef struct PhaseState
+{ // AI
     float phase;
     float raw_mag;
     float smooth_mag;
 } PhaseState;
+float G_PHASE_RAW_MAG;
 
-typedef struct RectState{ // AI
+typedef struct RectState
+{ // AI
     Vec2 tip;
-    bool    is_transient;
+    bool is_transient;
 } RectState;
 
 //[=======================================================================================================================================]
@@ -137,7 +147,7 @@ typedef struct RectState{ // AI
 
 // Globals
 // this should all be a struct, but we ball
-int ALERT = 0;
+int ALERT;
 int RES_X, RES_Y, TIME;
 int DEFAULT_SAMPLE_RATE = 44100;
 float BOUND_LEFT;
@@ -158,13 +168,13 @@ int ANGEL;
 // [=======================================================================================================================================]
 // FONTS
 // [=======================================================================================================================================]
-void load_nerv_fonts(Font* fonts, int** cjk_out, int* cp_count_out)
+void load_nerv_fonts(Font *fonts, int **cjk_out, int *cp_count_out)
 {
     // Define the CJK range
     int start = 0x4E00;
     int end = 0x9FFF;
     *cp_count_out = end - start + 1;
-    
+
     // Allocate and fill codepoints array
     *cjk_out = (int *)malloc((*cp_count_out) * sizeof(int));
     for (int i = 0; i < *cp_count_out; i++)
@@ -173,84 +183,15 @@ void load_nerv_fonts(Font* fonts, int** cjk_out, int* cp_count_out)
     }
 
     // Load Basic Fonts
-    fonts[MAT_PRO_EB]  = LoadFont("resources/FOT-Matisse-Pro-EB.otf");
+    fonts[MAT_PRO_EB] = LoadFont("resources/FOT-Matisse-Pro-EB.otf");
     fonts[MAT_CLASSIC] = LoadFont("resources/EVA-Matisse_Classic.ttf");
-    fonts[MAT_STD]     = LoadFont("resources/EVA-Matisse_Standard.ttf");
+    fonts[MAT_STD] = LoadFont("resources/EVA-Matisse_Standard.ttf");
 
     // Load Heavy JP Fonts with Codepoints
-    fonts[JP_MAT_STD]     = LoadFontEx("resources/EVA-Matisse_Standard.ttf", 64, *cjk_out, *cp_count_out);
+    fonts[JP_MAT_STD] = LoadFontEx("resources/EVA-Matisse_Standard.ttf", 64, *cjk_out, *cp_count_out);
     fonts[JP_MAT_CLASSIC] = LoadFontEx("resources/EVA-Matisse_Classic.ttf", 64, *cjk_out, *cp_count_out);
 
     fonts[BOLD_DS_DIGITAL] = LoadFont("resources/ds_digital/DS-DIGIB.TTF"); // clock font
-}
-// [=======================================================================================================================================]
-// FFT
-// [=======================================================================================================================================]
-// Bit-reversal permutation — scrambles input into the order the butterfly needs
-static void bit_reverse(Complex *x, int n) { // AI
-    for (int i = 1, j = 0; i < n; i++) {
-        int bit = n >> 1;
-        for (; j & bit; bit >>= 1)
-            j ^= bit;
-        j ^= bit;
-        if (i < j) {
-            Complex tmp = x[i]; x[i] = x[j]; x[j] = tmp;
-        }
-    }
-}
-
-// In-place FFT — x[] is overwritten with complex frequency bins
-void fft(Complex *x, int n) { // AI
-    bit_reverse(x, n);
-
-    // len = current butterfly span, doubles each stage
-    for (int len = 2; len <= n; len <<= 1) {
-        float ang = -2.0f * (float)M_PI / len;
-        Complex wlen = { cosf(ang), sinf(ang) }; // principal twiddle for this stage
-
-        for (int i = 0; i < n; i += len) {
-            Complex w = { 1.0f, 0.0f }; // running twiddle, starts at W^0
-
-            for (int j = 0; j < len / 2; j++) {
-                Complex u = x[i + j];
-                // w * x[i+j+len/2] — complex multiply
-                Complex v = {
-                    w.re * x[i+j+len/2].re - w.im * x[i+j+len/2].im,
-                    w.re * x[i+j+len/2].im + w.im * x[i+j+len/2].re
-                };
-                x[i + j]          = (Complex){ u.re + v.re, u.im + v.im };
-                x[i + j + len/2]  = (Complex){ u.re - v.re, u.im - v.im };
-
-                // Advance twiddle: w *= wlen
-                float wr = w.re * wlen.re - w.im * wlen.im;
-                float wi = w.re * wlen.im + w.im * wlen.re;
-                w.re = wr; w.im = wi;
-            }
-        }
-    }
-}
-
-// Magnitude of bin k (what you actually visualize)
-static inline float fft_mag(Complex c) { // AI
-    return sqrtf(c.re * c.re + c.im * c.im);
-}
-
-void compute_fft(Sample *s) //AI
-{
-    // Copy ring buffer into FFT input, correcting for write_head offset
-    // Apply a Hann window to suppress spectral leakage at bin edges
-    for (int i = 0; i < FFT_SIZE; i++)
-    {
-        int idx = (s->write_head + i) % FFT_SIZE;
-        float raw = s->samples[idx];
-
-        // Hann window: w(i) = 0.5 * (1 - cos(2π·i / (N-1)))
-        float window = 0.5f * (1.0f - cosf(2.0f * (float)M_PI * i / (FFT_SIZE - 1)));
-
-        g_fft_bins[i].re = raw * window;
-        g_fft_bins[i].im = 0.0f;
-    }
-    fft(g_fft_bins, FFT_SIZE);
 }
 
 //[=======================================================================================================================================
@@ -294,9 +235,10 @@ void window_monitor(bool is_resized)
     }
     DT = GetFrameTime();
 }
-void shader_monitor(RenderTexture2D* target_shader)
+void shader_monitor(RenderTexture2D *target_shader)
 {
-    if(IsWindowResized()){
+    if (IsWindowResized())
+    {
         UnloadRenderTexture(*target_shader);
         *target_shader = LoadRenderTexture(RES_X, RES_Y);
     }
@@ -334,55 +276,128 @@ void draw_ui(int pos_x, int pos_y, int font_size, Color c)
 void draw_axis(int screenWidth, int screenHeight, int line_thickness, Color c)
 {
     Y_AXIS = 0.9 * screenHeight;
-    Vec2 x_axis = {.x = 0, .y = 0.9 * screenHeight};
-    Vec2 x_end = {.x = screenWidth, .y = x_axis.y};
-    Vec2 y_axis = {.x = .10 * screenWidth, .y = 0};
-    Vec2 y_end = {.x = y_axis.x, .y = screenHeight};
-    // x
+    Vec2 x_axis = { .x = 0,           .y = 0.9 * screenHeight };
+    Vec2 x_end  = { .x = screenWidth,  .y = x_axis.y };
+    Vec2 y_axis = { .x = .10 * screenWidth, .y = 0 };
+    Vec2 y_end  = { .x = y_axis.x,    .y = screenHeight };
+
     DrawLineEx(x_axis, x_end, line_thickness, c);
-    float speed = 100.0f; // pixels per second
+
     static float offset = 0.0f;
-    offset += speed * GetFrameTime();
+    offset += 100.0f * GetFrameTime();
+    if (offset >= 50.0f) offset -= 50.0f;
+
     for (size_t i = 0; i < x_end.x; i += 50)
     {
         int dash_h = 10;
-        Vec2 v0 = {
-            .x = i - (int)offset % 50,
-            .y = x_axis.y - dash_h};
-        Vec2 v1 = {
-            .x = v0.x,
-            .y = v0.y + 2 * dash_h};
+        Vec2 v0 = { .x = i - (int)offset % 50, .y = x_axis.y - dash_h };
+        Vec2 v1 = { .x = v0.x,                 .y = v0.y + 2 * dash_h };
         DrawLineEx(v0, v1, line_thickness / 2, NERV_ALERT_RED);
+        DrawText(TextFormat("+%i", (int)i/100), v0.x - 10, v1.y, 10, c);
     }
 
-    // y
     DrawLineEx(y_axis, y_end, line_thickness, c);
     for (size_t i = 0; i < x_end.x; i += 50)
     {
         int dash_w = 10;
-        Vec2 v0 = {
-            .x = y_axis.x - dash_w,
-            .y = i};
-        Vec2 v1 = {
-            .x = v0.x + 2 * dash_w,
-            .y = v0.y};
+        Vec2 v0 = { .x = y_axis.x - dash_w, .y = i };
+        Vec2 v1 = { .x = v0.x + 2 * dash_w, .y = v0.y };
         DrawLineEx(v0, v1, line_thickness / 2, NERV_ALERT_RED);
     }
-    if (offset < 0)
-        offset += 50;
 }
 //[=======================================================================================================================================]]
 // AI
 //[=======================================================================================================================================]]
 //[=======================================================================================================================================]]
-// ── DSP 
+// [=======================================================================================================================================]
+// FFT
+// [=======================================================================================================================================]
+// Bit-reversal permutation — scrambles input into the order the butterfly needs
+static void bit_reverse(Complex *x, int n)
+{ // AI
+    for (int i = 1, j = 0; i < n; i++)
+    {
+        int bit = n >> 1;
+        for (; j & bit; bit >>= 1)
+            j ^= bit;
+        j ^= bit;
+        if (i < j)
+        {
+            Complex tmp = x[i];
+            x[i] = x[j];
+            x[j] = tmp;
+        }
+    }
+}
+
+// In-place FFT — x[] is overwritten with complex frequency bins
+void fft(Complex *x, int n)
+{ // AI
+    bit_reverse(x, n);
+
+    // len = current butterfly span, doubles each stage
+    for (int len = 2; len <= n; len <<= 1)
+    {
+        float ang = -2.0f * (float)M_PI / len;
+        Complex wlen = {cosf(ang), sinf(ang)}; // principal twiddle for this stage
+
+        for (int i = 0; i < n; i += len)
+        {
+            Complex w = {1.0f, 0.0f}; // running twiddle, starts at W^0
+
+            for (int j = 0; j < len / 2; j++)
+            {
+                Complex u = x[i + j];
+                // w * x[i+j+len/2] — complex multiply
+                Complex v = {
+                    w.re * x[i + j + len / 2].re - w.im * x[i + j + len / 2].im,
+                    w.re * x[i + j + len / 2].im + w.im * x[i + j + len / 2].re};
+                x[i + j] = (Complex){u.re + v.re, u.im + v.im};
+                x[i + j + len / 2] = (Complex){u.re - v.re, u.im - v.im};
+
+                // Advance twiddle: w *= wlen
+                float wr = w.re * wlen.re - w.im * wlen.im;
+                float wi = w.re * wlen.im + w.im * wlen.re;
+                w.re = wr;
+                w.im = wi;
+            }
+        }
+    }
+}
+
+// Magnitude of bin k (what you actually visualize)
+static inline float fft_mag(Complex c)
+{ // AI
+    return sqrtf(c.re * c.re + c.im * c.im);
+}
+/* Copy ring buffer into FFT input, correcting for write_head offset
+ * Apply a Hann window to suppress spectral leakage at bin edges */
+void compute_fft(Sample *s) // AI
+{
+    for (int i = 0; i < FFT_SIZE; i++)
+    {
+        int idx = (s->write_head + i) % FFT_SIZE;
+        float raw = s->samples[idx];
+
+        // Hann window: w(i) = 0.5 * (1 - cos(2π·i / (N-1)))
+        float window = 0.5f * (1.0f - cosf(2.0f * (float)M_PI * i / (FFT_SIZE - 1)));
+
+        g_fft_bins[i].re = raw * window;
+        g_fft_bins[i].im = 0.0f;
+    }
+    fft(g_fft_bins, FFT_SIZE);
+}
+
+// ── DSP
 
 static PeakBin find_peak_bin(void) // AI
 {
-    PeakBin p = { .bin = 5, .re = 0, .im = 0, .mag = 0.0f };
-    for (int k = 5; k < 80; k++) {
+    PeakBin p = {.bin = 5, .re = 0, .im = 0, .mag = 0.0f};
+    for (int k = 5; k < 80; k++)
+    {
         float m = fft_mag(g_fft_bins[k]);
-        if (m > p.mag) {
+        if (m > p.mag)
+        {
             p.mag = m;
             p.bin = k;
         }
@@ -395,20 +410,20 @@ static PeakBin find_peak_bin(void) // AI
 // Returns smoothed phase and magnitude. Owns its own static storage.
 static PhaseState smooth_phase(float re, float im) // AI
 {
-    static float smooth_re  = 0.0f;
-    static float smooth_im  = 0.0f;
+    static float smooth_re = 0.0f;
+    static float smooth_im = 0.0f;
     static float smooth_mag = 0.0f;
 
     const float alpha = 0.04f;
-    smooth_re  = alpha * re  + (1.0f - alpha) * smooth_re;
-    smooth_im  = alpha * im  + (1.0f - alpha) * smooth_im;
+    smooth_re = alpha * re + (1.0f - alpha) * smooth_re;
+    smooth_im = alpha * im + (1.0f - alpha) * smooth_im;
 
     float raw_mag = sqrtf(smooth_re * smooth_re + smooth_im * smooth_im);
     smooth_mag = 0.1f * raw_mag + 0.9f * smooth_mag;
 
     return (PhaseState){
-        .phase      = atan2f(smooth_im, smooth_re),
-        .raw_mag    = raw_mag,
+        .phase = atan2f(smooth_im, smooth_re),
+        .raw_mag = raw_mag,
         .smooth_mag = smooth_mag,
     };
 }
@@ -417,8 +432,9 @@ static float normalize_mag(float raw_mag, float smooth_mag, float *out_peak) // 
 {
     static float peak_mag = 0.001f;
     peak_mag *= 0.999f;
-    if (raw_mag > peak_mag) peak_mag = raw_mag;
-    *out_peak = peak_mag;          // caller writes PEAK_SAMPLE
+    if (raw_mag > peak_mag)
+        peak_mag = raw_mag;
+    *out_peak = peak_mag; // caller writes PEAK_SAMPLE
     float n = smooth_mag / peak_mag;
     return n > 1.0f ? 1.0f : (n < 0.0f ? 0.0f : n);
 }
@@ -430,10 +446,10 @@ static float compute_radius(int width, int height) // AI
 }
 
 static Vec2 compute_tip(Vec2 origin, float phase,
-                            float mag_normalized, float radius) // AI
+                        float mag_normalized, float radius) // AI
 {
     float needle_len = radius * mag_normalized;
-    float noise      = 0.01f * radius * (sinf(1.3f) + cosf(0.9f));
+    float noise = 0.01f * radius * (sinf(1.3f) + cosf(0.9f));
     return (Vec2){
         .x = origin.x + cosf(phase) * needle_len,
         .y = origin.y - sinf(phase) * (needle_len + noise),
@@ -445,61 +461,61 @@ static Vec2 compute_tip(Vec2 origin, float phase,
 static const Vec2 *update_trail(Vec2 tip, int *out_head) // AI
 {
     static Vec2 trail[TRAIL_LEN] = {0};
-    static int     trail_head    = 0;
+    static int trail_head = 0;
 
     trail[trail_head] = tip;
-    trail_head        = (trail_head + 1) % TRAIL_LEN;
-    *out_head         = trail_head;
+    trail_head = (trail_head + 1) % TRAIL_LEN;
+    *out_head = trail_head;
     return trail;
 }
 
 static void draw_needle(Vec2 tip) // AI
 {
-    Vec2 left  = { BOUND_LEFT,  BOUND_LEFT  - tip.y };
-    Vec2 right = { BOUND_RIGHT, BOUND_RIGHT - tip.y };
-    DrawLineBezier(left,  tip, BEZIER_SIZE, NERV_MAP_ORANGE);
+    Vec2 left = {BOUND_LEFT, BOUND_LEFT - tip.y};
+    Vec2 right = {BOUND_RIGHT, BOUND_RIGHT - tip.y};
+    DrawLineBezier(left, tip, BEZIER_SIZE, NERV_MAP_ORANGE);
     DrawLineBezier(right, tip, BEZIER_SIZE, NERV_MAP_ORANGE);
 }
 
 // Maps phase [-π, π] and mag_normalized [0,1] onto a rectangle's interior.
 // Phase → X axis, mag → Y axis, with an edge-snap on loud hits.
 static RectState compute_rect_tip(Vec2 origin, float phase,
-                                   float mag_normalized, float raw_mag,
-                                   float rect_w, float rect_h) // AI
+                                  float mag_normalized, float raw_mag,
+                                  float rect_w, float rect_h) // AI
 {
-    static float snap_x      = 0.0f;  // current snapped x offset
-    static float snap_y      = 0.0f;
-    static float last_raw    = 0.0f;
-    static int   edge_lock   = -1;    // -1 = free, 0=top,1=right,2=bottom,3=left
-    
+    static float snap_x = 0.0f; // current snapped x offset
+    static float snap_y = 0.0f;
+    static float last_raw = 0.0f;
+    static int edge_lock = -1; // -1 = free, 0=top,1=right,2=bottom,3=left
 
     float half_w = rect_w * 0.5f;
     float half_h = rect_h * 0.5f;
-
 
     // Phase maps [-π, π] → [-half_w, half_w]
     float x = (phase / (float)M_PI) * half_w;
 
     static float prev_raw = 0.0f;
-    float dy     = (raw_mag - prev_raw) * 0.4f;   // velocity, not position
-    prev_raw     = raw_mag;
+    float dy = (raw_mag - prev_raw) * 0.4f; // velocity, not position
+    prev_raw = raw_mag;
     static float y_accum = 0.0f;
-    y_accum = y_accum * 0.92f + dy;               // leaky integrator
+    y_accum = y_accum * 0.92f + dy; // leaky integrator
     float y = y_accum * half_h;
 
     // Transient detection: sudden spike in raw_mag
-    float delta      = raw_mag - last_raw;
-    bool  transient  = delta > (last_raw * 0.6f + 20.0f);
-    last_raw         = raw_mag;
-    
+    float delta = raw_mag - last_raw;
+    bool transient = delta > (last_raw * 0.6f + 20.0f);
+    last_raw = raw_mag;
 
-    if (transient) {
+    if (transient)
+    {
         // Snap tip to a random edge, biased by which quadrant phase puts us in
         edge_lock = (int)(fabsf(phase) * 1.9f / (float)M_PI * 4.0f) % 4;
         // Inject chaos offset that decays next frame
         snap_x = ((phase > 0) ? 1.0f : -1.0f) * half_w * 0.85f;
         snap_y = ((mag_normalized > 0.5f) ? 1.0f : -1.0f) * half_h * 0.85f;
-    } else {
+    }
+    else
+    {
         // Decay snap back toward computed position
         snap_x = snap_x * 0.88f + x * 0.12f;
         snap_y = snap_y * 0.88f + y * 0.12f;
@@ -509,12 +525,22 @@ static RectState compute_rect_tip(Vec2 origin, float phase,
     // If edge-locked, clamp the tip to that edge
     float out_x = snap_x;
     float out_y = snap_y;
-    switch (edge_lock) {
-        case 0: out_y = -half_h; break;          // top edge
-        case 1: out_x =  half_w; break;          // right edge
-        case 2: out_y =  half_h; break;          // bottom edge
-        case 3: out_x = -half_w; break;          // left edge
-        default: break;
+    switch (edge_lock)
+    {
+    case 0:
+        out_y = -half_h;
+        break; // top edge
+    case 1:
+        out_x = half_w;
+        break; // right edge
+    case 2:
+        out_y = half_h;
+        break; // bottom edge
+    case 3:
+        out_x = -half_w;
+        break; // left edge
+    default:
+        break;
     }
 
     return (RectState){
@@ -528,18 +554,20 @@ static RectState compute_rect_tip(Vec2 origin, float phase,
 
 static void draw_rect_trail(const Vec2 *trail, int head, bool is_transient) // AI
 {
-    for (int i = 0; i < TRAIL_LEN - 1; i++) {
-        int a = (head + i)     % TRAIL_LEN;
+    for (int i = 0; i < TRAIL_LEN - 1; i++)
+    {
+        int a = (head + i) % TRAIL_LEN;
         int b = (head + i + 1) % TRAIL_LEN;
         if ((trail[a].x == 0 && trail[a].y == 0) ||
-            (trail[b].x == 0 && trail[b].y == 0)) continue;
+            (trail[b].x == 0 && trail[b].y == 0))
+            continue;
 
         float thickness = is_transient
-            ? BEZIER_SIZE * (1.0f + (1.0f - (float)i / TRAIL_LEN) * 3.0f)
-            : BEZIER_SIZE;
+                              ? BEZIER_SIZE * (1.0f + (1.0f - (float)i / TRAIL_LEN) * 3.0f)
+                              : BEZIER_SIZE;
 
-        Color c = { NERV_MAP_ORANGE.r, NERV_MAP_ORANGE.g,
-                    NERV_MAP_ORANGE.b, 255 };
+        Color c = {NERV_MAP_ORANGE.r, NERV_MAP_ORANGE.g,
+                   NERV_MAP_ORANGE.b, 255};
         DrawLineBezier(trail[a], trail[b], thickness, c);
     }
 }
@@ -548,42 +576,45 @@ static void draw_rect_trail(const Vec2 *trail, int head, bool is_transient) // A
 static void draw_rect_bounds(Vec2 origin, float rect_w, float rect_h) // AI
 {
     Rectangle r = {
-        .x      = origin.x - rect_w * 0.5f,
-        .y      = origin.y - rect_h * 0.5f,
-        .width  = rect_w,
+        .x = origin.x - rect_w * 0.5f,
+        .y = origin.y - rect_h * 0.5f,
+        .width = rect_w,
         .height = rect_h,
     };
-    DrawRectangleLinesEx(r, 1, (Color){ NERV_MAP_ORANGE.r,
-                                        NERV_MAP_ORANGE.g,
-                                        NERV_MAP_ORANGE.b, 40 });
+    DrawRectangleLinesEx(r, 1, (Color){NERV_MAP_ORANGE.r, NERV_MAP_ORANGE.g, NERV_MAP_ORANGE.b, 40});
 }
 
 void draw_angle(Sample *s, int width, int height, Color *colors) // AI
 {
-    (void)s; (void)colors;
+    // Sample
+    (void)s;
 
-    PeakBin    peak   = find_peak_bin();
-    PhaseState phase  = smooth_phase(peak.re, peak.im);
-    float      mag_n  = normalize_mag(phase.raw_mag, phase.smooth_mag, &PEAK_SAMPLE);
+    (void)colors;
+
+    PeakBin peak = find_peak_bin();
+    G_PEAKBIN_MAG = peak.mag;
+    PhaseState phase = smooth_phase(peak.re, peak.im);
+    G_PHASE_RAW_MAG = phase.raw_mag;
+    float mag_n = normalize_mag(phase.raw_mag, phase.smooth_mag, &PEAK_SAMPLE);
 
     // Rectangle is 60% of the shorter screen dimension
     float rect_w = fminf(width, height) * 0.6f;
     float rect_h = fminf(width, height) * 0.45f;
 
-    Vec2  origin    = { width / 2.0f, height / 2.0f };
-    RectState rs       = compute_rect_tip(origin, phase.phase, mag_n,
-                                          phase.raw_mag, rect_w, rect_h);
+    Vec2 origin = {width / 2.0f, height / 2.0f};
+    RectState rs = compute_rect_tip(origin, phase.phase, mag_n,
+                                    phase.raw_mag, rect_w, rect_h);
 
-    int            trail_head;
+    int trail_head;
     const Vec2 *trail = update_trail(rs.tip, &trail_head);
 
     draw_rect_trail(trail, trail_head, rs.is_transient);
     draw_needle(rs.tip);
 
     FFT_RADIUS = (int)(rect_w * 0.5f);
-    TIP_X      = rs.tip.x;
-    TIP_Y      = rs.tip.y;
-    ANGEL      = (phase.raw_mag > 20) ? 1 : 0;
+    TIP_X = rs.tip.x;
+    TIP_Y = rs.tip.y;
+    ANGEL = (phase.raw_mag > ANGEL_LIMIT) ? 1 : 0;
 }
 //[=======================================================================================================================================]]
 //[=======================================================================================================================================]]
@@ -596,15 +627,15 @@ void draw_l()
         .y = RES_Y - RES_Y / 9};
     Vec2 v1 = {
         .x = BOUND_LEFT,
-        .y = BOUND_LEFT - TIP_Y};
+        .y = BOUND_LEFT-TIP_Y};
     DrawLineBezier(v0, v1, BEZIER_SIZE, NERV_MAP_ORANGE);
-    ANGEL = (v1.y > RES_Y/2) ? 1 : 0;
+    ANGEL = (v1.y > RES_Y / 2) ? 1 : 0;
 }
 void draw_r()
 {
     Vec2 v0 = {
         .x = BOUND_RIGHT,
-        .y =  BOUND_RIGHT - TIP_Y};
+        .y = BOUND_RIGHT - TIP_Y};
     Vec2 v1 = {
         .x = RES_X,
         .y = RES_Y - RES_Y / 9};
@@ -728,24 +759,27 @@ void draw_cover(Vec2 pos, float width, float height, Color bar_c, Color backg_c)
         DrawRectangleRec(r, bar_c);
     }
 }
-void draw_angel_warning(int warning, Font f_eng, Font f_jap)
+void draw_angel_warning(int warnining, Font f_eng, Font f_jap)
 {
-    if (!warning) return;
+    const float duration = 1.0f;
+    static float start = -1.0f;
+    if(warnining) start = GetTime();
+    if (start < 0) return;
+    if (GetTime() - start > duration) start = -1.0;
 
     Rectangle r = {
-        .width  = RES_X / 2.5f,
+        .width = RES_X / 2.5f,
         .height = RES_Y / 2.5f,
-        .x      = RES_X / 4.0f,
-        .y      = RES_Y / 5.0f
-    };
+        .x = RES_X / 4.0f,
+        .y = RES_Y / 5.0f};
 
     Color r_color = NERV_INTERFACE_BLUE;
 
     DrawRectangleRoundedLines(r, 0.2f, 80, r_color);
 
     // --- fit JP text to top half of rectangle ---
-    float target_w = r.width * 0.8f;   // leave 10% padding each side
-    float target_h = r.height * 0.45f; // top half
+    float target_w = r.width * 0.8f;   
+    float target_h = r.height * 0.45f; 
 
     // Start at a guess, then scale to fit width
     float jp_size = target_h;
@@ -755,9 +789,8 @@ void draw_angel_warning(int warning, Font f_eng, Font f_jap)
 
     jp_measured = MeasureTextEx(f_jap, "天使", jp_size, 0);
     Vec2 jp_pos = {
-        .x = r.x + (r.width - jp_measured.x) / 2.0f,  // centered
-        .y = r.y + r.height * 0.05f
-    };
+        .x = r.x + (r.width - jp_measured.x) / 2.0f, // centered
+        .y = r.y + r.height * 0.05f};
 
     // --- fit ENG text to bottom half ---
     float eng_size = target_h;
@@ -768,17 +801,19 @@ void draw_angel_warning(int warning, Font f_eng, Font f_jap)
     eng_measured = MeasureTextEx(f_eng, "Angel", eng_size, 0);
     Vec2 eng_pos = {
         .x = r.x + (r.width - eng_measured.x) / 2.0f, // centered
-        .y = r.y + r.height * 0.5f
-    };
-
+        .y = r.y + r.height * 0.5f};    
+    
     DrawTextEx(f_jap, "天使", jp_pos, jp_size, 0, r_color);
     DrawTextEx(f_eng, "Angel", eng_pos, eng_size, 0, r_color);
 }
-void play_angle_warning_sound(int warning, Sound* sound) {
-    if (!warning) return;
+void play_angle_warning_sound(int warning, Sound *sound)
+{
+    if (!warning)
+        return;
     static double last_angle_warning_time = 0.0f;
     double now = GetTime();
-    if(now - last_angle_warning_time < 5) return;
+    if (now - last_angle_warning_time < 5)
+        return;
     last_angle_warning_time = now;
     SetSoundVolume(*sound, 1.0f);
     PlaySound(*sound);
@@ -791,43 +826,36 @@ void draw_signals()
     draw_l();
     draw_r();
 }
-void draw_song_time(Music* audio_file, Font clock_font)
+void draw_song_time(Music *audio_file, Font clock_font)
 {
     Color clock_color = ANGEL ? NERV_INTERFACE_BLUE : NERV_ALERT_RED;
-    Vec2 pos = 
-    {
-        .x = RES_X*.85,
-        .y = RES_Y*.75
-    };
+    Vec2 pos =
+        {
+            .x = RES_X * .85,
+            .y = RES_Y * .75};
     Rectangle r = {
-        .width = RES_X*.1,
-        .height = RES_Y*.1,
+        .width = RES_X * .1,
+        .height = RES_Y * .1,
         .x = pos.x,
-        .y = pos.y
-    };
+        .y = pos.y};
     Vec2 tri_tip = {
-        .x = pos.x - r.width/3,
-        .y = pos.y + r.height/2
-    };
+        .x = pos.x - r.width / 3,
+        .y = pos.y + r.height / 2};
     Vec2 tri_1 = {
         .x = pos.x,
-        .y = pos.y + r.height
-    };
+        .y = pos.y + r.height};
     DrawRectangleRec(r, clock_color);
     DrawTriangle(pos, tri_tip, tri_1, clock_color);
     Vec2 tri_0 = {
         .x = pos.x + r.width,
-        .y = pos.y
-    };
+        .y = pos.y};
     tri_1 = (Vec2){
         .x = pos.x + r.width,
-        .y = pos.y + r.height
-    };
+        .y = pos.y + r.height};
 
     tri_tip = (Vec2){
-        .x = tri_0.x + r.width/3,
-        .y = tri_0.y + r.height/2
-    };
+        .x = tri_0.x + r.width / 3,
+        .y = tri_0.y + r.height / 2};
     DrawTriangle(tri_0, tri_1, tri_tip, clock_color);
 
     // get song length & position (keep as float for precision)
@@ -835,16 +863,16 @@ void draw_song_time(Music* audio_file, Font clock_font)
     float song_position = GetMusicTimePlayed(*audio_file);
 
     // Better time format (MM:SS) - highly recommended
-    int milis   = (int)(song_position * 1000) % 1000;
+    int milis = (int)(song_position * 1000) % 1000;
     int min_pos = (int)song_position / 60;
     int sec_pos = (int)song_position % 60;
     int min_len = (int)song_length / 60;
     int sec_len = (int)song_length % 60;
-    char* time_str = TextFormat("%02d:%02d:%02d: / %02d:%02d", min_pos, sec_pos, milis, min_len, sec_len);
+    char *time_str = TextFormat("%02d:%02d:%02d: / %02d:%02d", min_pos, sec_pos, milis, min_len, sec_len);
 
     // === TEXT SIZING & CENTERING ===
     float spacing = 2.0f;
-    float time_size = r.height * 0.95f;      // a bit smaller than full height so it fits nicely
+    float time_size = r.height * 0.95f; // a bit smaller than full height so it fits nicely
 
     Vec2 time_measured = MeasureTextEx(clock_font, time_str, time_size, spacing);
 
@@ -857,59 +885,68 @@ void draw_song_time(Music* audio_file, Font clock_font)
 
     // Proper center (top-left of text = center of rectangle minus half text size)
     Vec2 time_pos = {
-        .x = r.x + (r.width  - time_measured.x) / 2.0f,
-        .y = r.y + (r.height - time_measured.y) / 2.0f
-    };
+        .x = r.x + (r.width - time_measured.x) / 2.0f,
+        .y = r.y + (r.height - time_measured.y) / 2.0f};
 
     DrawTextEx(clock_font, time_str, time_pos, time_size, spacing, BLACK);
 }
-void draw_lable(Font font, const char* text) 
+void draw_label(Font font, const char *text)
 {
-    float font_size = (DWR < 0.5) ? RES_Y / (35.0f) : RES_Y / (35.0f*1+DWR);
-    //printf("%f\n", DWR);
+    float font_size = (DWR < 0.5) ? RES_Y / (35.0f) : RES_Y / (35.0f * 1 + DWR);
+    // printf("%f\n", DWR);
     Vec2 textSize = MeasureTextEx(font, text, font_size, 0.0f);
-    
-    Vec2 font_pos = (DWR < 0.5) ? (Vec2){RES_X * 0.135f, RES_Y * 0.1f} :  (Vec2){RES_X * 0.135f-DWR, RES_Y * 0.1f};
-    
-    float padding_x = RES_X * 0.001f; 
+
+    Vec2 font_pos = (DWR < 0.5) ? (Vec2){RES_X * 0.135f, RES_Y * 0.1f} : (Vec2){RES_X * 0.135f - DWR, RES_Y * 0.1f};
+
+    float padding_x = RES_X * 0.001f;
     float padding_y = RES_Y * 0.005f;
 
-    Rectangle text_rect = 
-    {
-        .x = font_pos.x - padding_x, 
-        .y = font_pos.y - padding_y, 
-        .width = textSize.x + (padding_x * 2), 
-        .height = textSize.y + (padding_y * 2)
-    };
+    Rectangle text_rect =
+        {
+            .x = font_pos.x - padding_x,
+            .y = font_pos.y - padding_y,
+            .width = textSize.x + (padding_x * 2),
+            .height = textSize.y + (padding_y * 2)};
     DrawRectangleRoundedLines(
-        text_rect, 
-        0.5f, 
-        4, 
-        NERV_MAGI_AMBER
-    );
+        text_rect,
+        0.5f,
+        4,
+        NERV_MAGI_AMBER);
     DrawTextEx(font, text, font_pos, font_size, 0.0f, NERV_MAGI_AMBER);
 }
 
 void draw_hex_back(int res_x, int res_y, Font f)
 {
     float hex_radius = 40.0f * fmaxf(1.0f, fmaxf(DWR / 2, DHR / 2));
-    float hex_width  = hex_radius * 2.0f;
-    float bound_x    = res_x + hex_radius;
-    float bound_y    = res_y + hex_radius;
-    float t          = GetTime() * 90.0f;
-    int   font_size  = (int)(hex_radius * 0.4f);
-    Color hex_c      = { 255, 0, 0, 90 };
-    Color text_c     = ((int)(GetTime() * 2) % 2 == 0) ? NERV_MAGI_AMBER : WHITE;
+    float hex_width = hex_radius * 2.0f;
+    float bound_x = res_x + hex_radius;
+    float bound_y = res_y + hex_radius;
+    float t = GetTime() * 90.0f;
+    int font_size = (int)(hex_radius * 0.4f);
+    Color hex_c = {255, 0, 0, 90};
+    Color text_c = ((int)(GetTime() * 2) % 2 == 0) ? NERV_MAGI_AMBER : WHITE;
 
     for (int i = 0; i < 100; i++)
     {
         float x, y;
-        if      (i % 9  == 0) { x = fmodf(i * hex_width - t / 10,  bound_x); y = fmodf(i * hex_width + t / 10,  bound_y); }
-        else if (i % 10 == 0) { x = fmodf(i * hex_width + t,        bound_x); y = fmodf(i * hex_width - t,        bound_y); }
-        else                  { x = fmodf(i * hex_width + t * 1.5f,  bound_x); y = fmodf(i * hex_width + t * 1.5f, bound_y); }
+        if (i % 9 == 0)
+        {
+            x = fmodf(i * hex_width - t / 10, bound_x);
+            y = fmodf(i * hex_width + t / 10, bound_y);
+        }
+        else if (i % 10 == 0)
+        {
+            x = fmodf(i * hex_width + t, bound_x);
+            y = fmodf(i * hex_width - t, bound_y);
+        }
+        else
+        {
+            x = fmodf(i * hex_width + t * 1.5f, bound_x);
+            y = fmodf(i * hex_width + t * 1.5f, bound_y);
+        }
 
-        Vector2 center    = { x, y };
-        int     text_width = MeasureText("ALERT", font_size);
+        Vector2 center = {x, y};
+        int text_width = MeasureText("ALERT", font_size);
 
         DrawPoly(center, 6, hex_radius, 0, hex_c);
         DrawPolyLines(center, 6, hex_radius * 1.1f, 0, MAROON);
@@ -917,28 +954,31 @@ void draw_hex_back(int res_x, int res_y, Font f)
     }
 }
 
-void expir_draw(Vec2* pts, int i) 
+void expir_draw(Vec2 *pts, int i)
 {
-    for(int j = 0; j+1 < i; j++) 
+    for (int j = 0; j + 1 < i; j++)
     {
-        DrawLine(pts[j].x, pts[j].y, pts[j+1].x, pts[j+1].y, NERV_MAGI_AMBER);
+        DrawLine(pts[j].x, pts[j].y, pts[j + 1].x, pts[j + 1].y, NERV_MAGI_AMBER);
     }
 }
-void expir(int res_x, int res_y, Vec2* pts) 
+void expir(int res_x, int res_y, Vec2 *pts)
 {
-    if (GetTime() < 1.0f) return;
+    if (GetTime() < 1.0f)
+        return;
     Vec2 md = GetMouseDelta();
     static int i = 0;
     expir_draw(pts, i);
-    if((md.x < 1 && md.y < 1 || i+1 > MAX_MOUSE_PTS) ) return;
+    if ((md.x < 1 && md.y < 1 || i + 1 > MAX_MOUSE_PTS))
+        return;
     Vec2 v = GetMousePosition();
-    if (v.x < 10 && v.y < 10) return;
+    if (v.x < 10 && v.y < 10)
+        return;
     if (GetTime() < 1.0f)
     {
         pts[0].x = v.x;
         pts[0].y = v.y;
-        pts[1].x = v.x+1;
-        pts[1].y = v.y+1;
+        pts[1].x = v.x + 1;
+        pts[1].y = v.y + 1;
         i = 1;
         return;
     }
@@ -947,27 +987,26 @@ void expir(int res_x, int res_y, Vec2* pts)
     i++;
     // if mouse clicked and i+1 > MAX_MOUSE_PTS, reset i
     // would it ever reach this point this though?
-    if(i+1 > MAX_MOUSE_PTS) {
+    if (i + 1 > MAX_MOUSE_PTS)
+    {
         i = 0;
     }
 }
-void draw_get_in_the_bot(Font f)
+
+void draw_get_in_the_bot(Font f, float font_size, float x, float y)
 {
-    if(g_sample.samples[0] == 0) return;
-    float font_size = RES_Y / (15.0f);
-    const char* text = "GET IN THE FUCKING ROBOT SHINJI";
+    if (g_sample.samples[0] == 0) return;
+    const char *text = "GET IN THE FUCKING ROBOT SHINJI";
     Vec2 placement = {
-        .x = RES_X * 0.2f,
-        .y = RES_Y * 0.8f
-    };
-    static float time = 10.0f;
-    if (GetTime() < time) { DrawTextPro(f, text, placement, (Vec2){0}, 0.0f, font_size, 0, WHITE); time--; }
+        .x = x,
+        .y = y};
+    DrawTextPro(f, text, placement, (Vec2){0}, 0.0f, font_size, 0, WHITE);
 }
-void envelope(float res_y, int max_points, Vec2* list, float offset_x, float offset_y, float width, float* static_t)
+void envelope(float res_y, int max_points, Vec2 *list, float offset_x, float offset_y, float width, float *static_t)
 {
-    float freq = 1.0f; 
-    float amp = res_y*.6;
-        for (size_t i = 0; i < max_points; i++)
+    float freq = 1.0f;
+    float amp = res_y * .6;
+    for (size_t i = 0; i < max_points; i++)
     {
         // 2. Normalize t (0.0 to 1.0)
         float t = (float)i / (float)(max_points - 1);
@@ -984,70 +1023,157 @@ void envelope(float res_y, int max_points, Vec2* list, float offset_x, float off
         list[i].y = (envelope * wave * amp) + offset_y;
     }
 }
-void draw_sync_align_back(int res_x, int res_y, Vec2* list, int max_points)
+// Touches ALERT
+void draw_sync_align_back(int res_x, int res_y, Vec2 *list, int max_points)
 {
     static float phase_acc = 0.0f;
-    float time         = GetTime();
-    float converge_off = fmaxf(0.0f, 1.0f - (time / 21.5f)) * res_x * 0.1f;
-    float lo           = res_x * 0.015f;
+    float song_specific_time = 22.0;
+    float time = GetTime();
+    float iniial_offset_x = res_x * 0.1f;
+    float multiplier = fmaxf(0.0f, 1.0f - (time / song_specific_time));
+    float converge_offset = multiplier * iniial_offset_x * 2;
+    float left_offset = res_x * 0.015f;
 
     envelope(res_y, max_points, list, 0.0f, res_y / 2.0f, (float)res_x, &phase_acc);
 
-    if (converge_off == 0.0f) phase_acc += time;
-    if (converge_off == 0.0f && ALERT < 1 && time > 30.0f) ALERT = 1;
+    if (converge_offset == 0.0f)
+        phase_acc += time;
+    // HARDCODED FOR DEMONSTRATION PURPOSES
+    if (converge_offset == 0.0f && ALERT < 1 && time > 30.0f)
+        ALERT = 1;
 
-    Color amber_blue  = converge_off ? NERV_MAGI_AMBER : BLUE;
-    Color orange_blue = converge_off ? EVA_00_ORANGE   : BLUE;
+    Color c = converge_offset ? NERV_MAGI_AMBER : BLUE;
 
     for (size_t i = 0; i < max_points - 1; i++)
     {
         Vec2 a = list[i];
         Vec2 b = list[i + 1];
 
-        Vec2 a_lo  = { a.x + lo,              a.y };
-        Vec2 b_lo  = { b.x + lo,              b.y };
-        Vec2 a_c   = { a.x + converge_off,         a.y };
-        Vec2 b_c   = { b.x + converge_off,         b.y };
-        Vec2 a_clo = { a.x + converge_off + lo,    a.y };
-        Vec2 b_clo = { b.x + converge_off + lo,    b.y };
-        Vec2 a_cl2 = { a.x + converge_off + lo*2,  a.y };
-        Vec2 b_cl2 = { b.x + converge_off + lo*2,  b.y };
+        Vec2 i_left = {a.x + left_offset-converge_offset, a.y};
+        Vec2 i_right = {b.x + left_offset-converge_offset, b.y};
+        Vec2 ii_left = {a.x + converge_offset, a.y};
+        Vec2 ii_right = {b.x + converge_offset, b.y};
+        Vec2 iii_left = {a.x + converge_offset + left_offset * 2, a.y};
+        Vec2 iii_right = {b.x + converge_offset + left_offset * 2, b.y};
+        Vec2 iv_left = {a.x + converge_offset + left_offset * 4, a.y};
+        Vec2 iv_right = {b.x + converge_offset + left_offset * 4, b.y};
+        Vec2 v_left = {a.x + converge_offset + left_offset * 6, a.y};
+        Vec2 v_right = {b.x + converge_offset + left_offset * 6, b.y};
+        // GROUP 1
+        DrawLineBezier(a, b, 4, PURPLE);
+        DrawLineBezier(i_left, i_right, 4, PURPLE);
+        // GROUP 2
+        DrawLineBezier(ii_left, ii_right, 4, RED);
+        DrawLineBezier(iii_left, iii_right, 4, RED);
+        // GROUP 3
+        DrawLineBezier(iv_left, iv_right, 4, WHITE);
+        DrawLineBezier(v_left, v_right, 4, WHITE);
 
-        DrawLineBezier(a,     b,     4, amber_blue);
-        DrawLineBezier(a_lo,  b_lo,  4, amber_blue);
-        DrawLineBezier(a_c,   b_c,   4, orange_blue);
-        DrawLineBezier(a_clo, b_clo, 4, orange_blue);
-        DrawLineBezier(a_cl2, b_cl2, 4, orange_blue);
-
-        if ((int)a_lo.x % 4 == 0) DrawLine(a_lo.x,  a_lo.y,  b_cl2.x, b_cl2.y, GREEN);
-        if ((int)b_lo.x % 5 == 0) DrawLine(b_lo.x,  a_lo.y,  b_c.x,   b_c.y,   PURPLE);
-        if ((int)b_lo.x % 6 == 0) DrawLine(b_lo.x,  a_lo.y,  b_c.x,   b_c.y,   PINK);
-        if ((int)b_lo.x % 7 == 0) DrawLine(a_clo.x, a_clo.y, b_clo.x, b_clo.y, PINK);
-        if ((int)b_lo.x % 8 == 0) DrawLine(a_cl2.x, a_cl2.y, b_cl2.x, b_cl2.y, PINK);
+        if ((int)a.x % 3 == 0) 
+            { DrawLine(b.x, b.y, i_left.x, i_right.y+4, GREEN); }
+        if ((int)b.x % 3 == 0)
+            { DrawLine(ii_right.x, i_right.y, iii_left.x, iii_left.y+5, ORANGE); }
+        if ((int)a.x % 3 == 0)
+            { DrawLine(iv_right.x, iv_right.y, v_left.x, v_left.y+2, BLUE); }
     }
 }
-void _draw(Font fonts[], Music* audio_file)
+void draw_snow(int res_x, int res_y)
 {
-    float now = GetTime();
+    int r = res_x * res_y;
+    for (size_t i = 0; i < r; i++)
+    {
+        int x = GetRandomValue(0, res_x);
+        int y = GetRandomValue(0, res_y);
+        if (i % 6 == 0) DrawPixel(x, y, NERV_MAGI_AMBER);
+    } 
+}
+void draw_typing_text(Font f, const char* text, Vec2 pos, float font_size, Color c, float chars_per_sec)
+{
+    static float elapsed = 0.0f;
+    elapsed += GetFrameTime();
 
-    if (now > 21.5f && now < 30.0f)
-        draw_hex_back(RES_X, RES_Y, fonts[MAT_CLASSIC]);
+    int visible = (int)(elapsed * chars_per_sec);
+    int total   = TextLength(text);
+    if (visible > total) visible = total;
 
+    // Draw visible portion
+    char buf[1024];
+    TextCopy(buf, text);
+    buf[visible] = '\0';
+    DrawTextEx(f, buf, pos, font_size, 0, c);
+
+    // Cursor blink
+    if (visible < total && (int)(elapsed * 2) % 2 == 0)
+    {
+        Vec2 cursor_pos = {
+            .x = pos.x + MeasureTextEx(f, buf, font_size, 0).x + 2,
+            .y = pos.y
+        };
+        DrawTextEx(f, "|", cursor_pos, font_size, 0, c);
+    }
+}
+
+
+#define SINE_TRAIL_CAPACITY 350
+void _draw(Font fonts[], Music *audio_file)
+{
+    float now = GetMusicTimePlayed(*audio_file);
+
+    
     static bool initialized = false;
-    static Vec2 sin_trail[350];
+    static Vec2 sin_trail[SINE_TRAIL_CAPACITY];
+    
     if (!initialized)
     {
-        for (size_t i = 0; i < 350; i++) sin_trail[i] = (Vec2){0};
+        for (size_t i = 0; i < 350; i++) { sin_trail[i] = (Vec2){0}; }
         initialized = true;
     }
 
-    if (!ALERT) draw_sync_align_back(RES_X, RES_Y, sin_trail, 350);
-    if  (ALERT) draw_signals();
+    if (now > 21.5f && now < 30.0f)
+    {
+        draw_hex_back(RES_X, RES_Y, fonts[MAT_CLASSIC]);
+        draw_header((Vec2){0}, RES_X, 0.05*RES_Y, BLACK, YELLOW);
+    }
 
+    if (ALERT)
+    { 
+            draw_signals();
+            if (ANGEL) draw_get_in_the_bot(fonts[MAT_PRO_EB], RES_Y*.07, RES_X * 0.03f, RES_Y * 0.8f);
+    }
+    if (!ALERT)
+    {
+        draw_sync_align_back(RES_X, RES_Y, sin_trail, 350);
+        if (now < 10) draw_typing_text(fonts[MAT_CLASSIC], "Shinji, get in the robot", (Vec2){RES_X * 0.1f, RES_Y * 0.8f}, RES_Y * 0.04f, WHITE, 4.0f);
+    }
     draw_axis(RES_X, RES_Y, 5, NERV_MAGI_AMBER);
     draw_overlay(RES_X - RES_X / 4, RES_Y);
     draw_angel_warning(ANGEL, fonts[MAT_CLASSIC], fonts[JP_MAT_CLASSIC]);
     draw_song_time(audio_file, fonts[BOLD_DS_DIGITAL]);
-    draw_lable(fonts[MAT_PRO_EB], ALERT ? "PYSCHOGRAPHIC DISPLAY" : "SYNC RATE");
-    draw_get_in_the_bot(fonts[MAT_PRO_EB]);
+    
+    draw_label(fonts[MAT_PRO_EB], ALERT ? "PYSCHOGRAPHIC DISPLAY" : TextFormat("SYNC RATE\n %.2f%", 10+10*(GetFrameTime()*GetTime())));
+    if (IsKeyDown(KEY_ONE)) draw_hex_back(RES_X, RES_Y, fonts[MAT_CLASSIC]);
+    if (IsKeyDown(KEY_TWO)) { draw_axis(RES_X, RES_Y, 5, NERV_MAGI_AMBER); draw_signals(); }
+    if ((now > 1)) 
+    { 
+        draw_snow(RES_X, RES_Y); 
+        draw_angel_warning(1, fonts[MAT_CLASSIC], fonts[JP_MAT_CLASSIC]); 
+        
+        draw_typing_text(fonts[MAT_PRO_EB], "SEELE", 
+            (Vec2){RES_X*.3, RES_Y/2}, RES_Y * 0.04f, BLACK, 2.0f);
+        draw_typing_text(fonts[MAT_CLASSIC], "EMBRACE HUMAN INSTRUMENTALITY", (
+            Vec2){RES_X*.3, (RES_Y/2)+20}, RES_Y * 0.04f, BLACK, 2.0f);
+        
+        draw_typing_text(fonts[MAT_CLASSIC], "Congratulations!", 
+            (Vec2){RES_X/2, RES_Y*0.7}, RES_Y * 0.04f, EVA_GREEN, 2.0f);
+
+        draw_typing_text(fonts[MAT_CLASSIC], "Herzlichen Glückwunsch!", 
+            (Vec2){RES_X*.7, RES_Y*2}, RES_Y * 0.04f, EVA_02_RED, 2.0f);
+
+        // FIX THESE
+        draw_typing_text(fonts[JP_MAT_CLASSIC], "おめでとう!", 
+            (Vec2){RES_X*.3, RES_Y/2}, RES_Y * 0.04f, WHITE, 2.0f);
+        draw_typing_text(fonts[JP_MAT_STD], "おめでとうございます!", 
+            (Vec2){RES_X*.7, RES_Y/2}, RES_Y * 0.04f, PURPLE, 2.0f);
+        
+    }
 }
