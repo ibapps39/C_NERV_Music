@@ -34,6 +34,7 @@
 #define SQRT_THREE 1.7321
 #define MAX_MOUSE_PTS 300
 #define ANGEL_LIMIT 20.0f
+#define SINE_TRAIL_CAPACITY 350
 
 // [=======================================================================================================================================]
 //  NERV COLORS
@@ -1120,7 +1121,7 @@ void draw_sync_align_back(int res_x, int res_y, Vec2 *list, int max_points)
 }
 void draw_snow(int res_x, int res_y)
 {
-    int r = res_x * res_y;
+    int r = (res_x * res_y);
     for (size_t i = 0; i < r; i++)
     {
         int x = GetRandomValue(0, res_x);
@@ -1152,7 +1153,7 @@ void draw_typing_text(Font f, const char* text, Vec2 pos, float font_size, Color
 }
 
 
-#define SINE_TRAIL_CAPACITY 350
+
 void _draw(Font fonts[], Music *audio_file)
 {
     float now = GetMusicTimePlayed(*audio_file);
@@ -1192,7 +1193,7 @@ void _draw(Font fonts[], Music *audio_file)
     draw_label(fonts[MAT_PRO_EB], ALERT ? "PYSCHOGRAPHIC DISPLAY" : TextFormat("SYNC RATE\n %.2f%%", fminf(100, 79+TIME)));
     if (IsKeyDown(KEY_ONE)) { draw_hex_back(RES_X, RES_Y, fonts[MAT_CLASSIC]); }
     if (IsKeyDown(KEY_TWO)) { draw_axis(RES_X, RES_Y, 5, NERV_MAGI_AMBER); draw_signals(); }
-    if ((now > 40)) 
+    if (now > 40) 
     { 
         static float t_shinji = 0;
         static float t_seele = 0;
