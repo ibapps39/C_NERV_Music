@@ -77,6 +77,11 @@ debug: CFLAGS = $(CFLAGS_BASE) $(CFLAGS_STRICT) $(CFLAGS_DEBUG)
 debug: LDLIBS = $(LDLIBS_BASE) $(LDLIBS_DEBUG)
 debug: all
 
+
+profile: CFLAGS = $(CFLAGS_BASE) -g -O1 -fno-omit-frame-pointer
+profile: LDLIBS = $(LDLIBS_BASE)
+profile: all
+
 clean:
 	$(CLEAN)
 

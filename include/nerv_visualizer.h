@@ -109,7 +109,6 @@ typedef struct Sample
 } Sample;
 
 Sample g_sample = {0};
-
 Complex g_fft_bins[FFT_SIZE]; // persistent, no alloc per frame
 
 typedef enum FONTS
@@ -128,6 +127,7 @@ typedef struct PeakBin
     float re, im;
     float mag;
 } PeakBin;
+
 float G_PEAKBIN_MAG;
 
 typedef struct PhaseState
@@ -136,7 +136,9 @@ typedef struct PhaseState
     float raw_mag;
     float smooth_mag;
 } PhaseState;
+
 float G_PHASE_RAW_MAG;
+
 
 typedef struct RectState
 { // AI
@@ -173,7 +175,41 @@ float Y_AXIS;
 double TIME;
 
 
+// typedef struct G_State
+// {
+//     int ALERT;
+//     int RES_X;
+//     int RES_Y;
+//     int ANGEL;
 
+//     float BOUND_LEFT;
+//     float BOUND_RIGHT;
+//     float TIP_Y;
+//     float TIP_X;
+//     float DT;
+//     float DWR; // change in width resolution
+//     float DHR; // change in height resolution
+//     float DR;  // change in resolution
+
+//     double TIME;
+// } G_State;
+
+// G_State g_state;
+
+// typedef struct G_FFT
+// {
+//     Signal G_SIGNAL;
+//     Vec2 G_RECT_TIP;
+//     RectState G_RECT_STATE;
+//     PhaseState G_PHASE_STATE;
+//     float PEAK_SAMPLE;
+//     float MIN_SAMPLE;
+//     int FFT_RADIUS;
+//     float G_PHASE_RAW_MAG;
+//     float G_PEAKBIN_MAG;
+// } G_FFT;
+
+// G_FFT g_fft;
 // [=======================================================================================================================================]
 // FONTS
 // [=======================================================================================================================================]
@@ -212,11 +248,11 @@ void load_nerv_fonts(Font *fonts, int **cjk_out, int *cp_count_out)
         for (int cp = latin_jp_ranges[r][0]; cp <= latin_jp_ranges[r][1]; cp++)
             latin_jp_cps[idx++] = cp;
 
-    fonts[MAT_PRO_EB]      = LoadFont("resources/FOT-Matisse-Pro-EB.otf");
-    fonts[MAT_CLASSIC]     = LoadFontEx("resources/EVA-Matisse_Classic.ttf", 64, latin_jp_cps, latin_jp_total);
-    fonts[MAT_STD]         = LoadFont("resources/EVA-Matisse_Standard.ttf");
-    fonts[JP_MAT_STD]      = LoadFontEx("resources/EVA-Matisse_Standard.ttf", 64, *cjk_out, *cp_count_out);
-    fonts[JP_MAT_CLASSIC]  = LoadFontEx("resources/EVA-Matisse_Classic.ttf",  64, *cjk_out, *cp_count_out);
+    fonts[MAT_PRO_EB] = LoadFont("resources/FOT-Matisse-Pro-EB.otf");
+    fonts[MAT_CLASSIC] = LoadFontEx("resources/EVA-Matisse_Classic.ttf", 64, latin_jp_cps, latin_jp_total);
+    fonts[MAT_STD] = LoadFont("resources/EVA-Matisse_Standard.ttf");
+    fonts[JP_MAT_STD] = LoadFontEx("resources/EVA-Matisse_Standard.ttf", 64, *cjk_out, *cp_count_out);
+    fonts[JP_MAT_CLASSIC] = LoadFontEx("resources/EVA-Matisse_Classic.ttf", 64, *cjk_out, *cp_count_out);
     fonts[BOLD_DS_DIGITAL] = LoadFont("resources/ds_digital/DS-DIGIB.TTF");
 
     free(latin_jp_cps);
@@ -308,32 +344,33 @@ void draw_ui(int pos_x, int pos_y, int font_size, Color c)
 void draw_axis(int screenWidth, int screenHeight, int line_thickness, Color c)
 {
     Y_AXIS = 0.9 * screenHeight;
-    Vec2 x_axis = { .x = 0,           .y = 0.9 * screenHeight };
-    Vec2 x_end  = { .x = screenWidth,  .y = x_axis.y };
-    Vec2 y_axis = { .x = .10 * screenWidth, .y = 0 };
-    Vec2 y_end  = { .x = y_axis.x,    .y = screenHeight };
+    Vec2 x_axis = {.x = 0, .y = 0.9 * screenHeight};
+    Vec2 x_end = {.x = screenWidth, .y = x_axis.y};
+    Vec2 y_axis = {.x = .10 * screenWidth, .y = 0};
+    Vec2 y_end = {.x = y_axis.x, .y = screenHeight};
 
     DrawLineEx(x_axis, x_end, line_thickness, c);
 
     float speed = 100.0f;
-    float offset = fmod(TIME*speed, 50.0f);
-    if (offset >= 50.0f) offset -= 50.0f;
+    float offset = fmod(TIME * speed, 50.0f);
+    if (offset >= 50.0f)
+        offset -= 50.0f;
 
     for (size_t i = 0; i < x_end.x; i += 50)
     {
         int dash_h = 10;
-        Vec2 v0 = { .x = i - (int)offset % 50, .y = x_axis.y - dash_h };
-        Vec2 v1 = { .x = v0.x,                 .y = v0.y + 2 * dash_h };
+        Vec2 v0 = {.x = i - (int)offset % 50, .y = x_axis.y - dash_h};
+        Vec2 v1 = {.x = v0.x, .y = v0.y + 2 * dash_h};
         DrawLineEx(v0, v1, line_thickness / 2, NERV_ALERT_RED);
-        DrawText(TextFormat("+%i", (int)i/100), v0.x - 20, v1.y, 10, c);
+        DrawText(TextFormat("+%i", (int)i / 100), v0.x - 20, v1.y, 10, c);
     }
 
     DrawLineEx(y_axis, y_end, line_thickness, c);
     for (size_t i = 0; i < x_end.x; i += 50)
     {
         int dash_w = 10;
-        Vec2 v0 = { .x = y_axis.x - dash_w, .y = i };
-        Vec2 v1 = { .x = v0.x + 2 * dash_w, .y = v0.y };
+        Vec2 v0 = {.x = y_axis.x - dash_w, .y = i};
+        Vec2 v1 = {.x = v0.x + 2 * dash_w, .y = v0.y};
         DrawLineEx(v0, v1, line_thickness / 2, NERV_ALERT_RED);
     }
 }
@@ -659,7 +696,7 @@ void draw_l()
         .y = RES_Y - RES_Y / 9};
     Vec2 v1 = {
         .x = BOUND_LEFT,
-        .y = BOUND_LEFT-TIP_Y};
+        .y = BOUND_LEFT - TIP_Y};
     DrawLineBezier(v0, v1, BEZIER_SIZE, NERV_MAP_ORANGE);
     ANGEL = (v1.y > RES_Y / 2) ? 1 : 0;
 }
@@ -791,13 +828,16 @@ void draw_cover(Vec2 pos, float width, float height, Color bar_c, Color backg_c)
         DrawRectangleRec(r, bar_c);
     }
 }
-void draw_angel_warning(int warnining, Font f_eng, Font f_jap)
+void draw_angel_warning(int warning, Font f_eng, Font f_jap)
 {
     const float duration = 1.0f;
     static float start = -1.0f;
-    if(warnining) start = GetTime();
-    if (start < 0) return;
-    if (GetTime() - start > duration) start = -1.0;
+    if (warning)
+        start = GetTime();
+    if (start < 0)
+        return;
+    if (GetTime() - start > duration)
+        start = -1.0;
 
     Rectangle r = {
         .width = RES_X / 2.5f,
@@ -810,8 +850,8 @@ void draw_angel_warning(int warnining, Font f_eng, Font f_jap)
     DrawRectangleRoundedLines(r, 0.2f, 80, r_color);
 
     // --- fit JP text to top half of rectangle ---
-    float target_w = r.width * 0.8f;   
-    float target_h = r.height * 0.45f; 
+    float target_w = r.width * 0.8f;
+    float target_h = r.height * 0.45f;
 
     // Start at a guess, then scale to fit width
     float jp_size = target_h;
@@ -833,8 +873,8 @@ void draw_angel_warning(int warnining, Font f_eng, Font f_jap)
     eng_measured = MeasureTextEx(f_eng, "Angel", eng_size, 0);
     Vec2 eng_pos = {
         .x = r.x + (r.width - eng_measured.x) / 2.0f, // centered
-        .y = r.y + r.height * 0.5f};    
-    
+        .y = r.y + r.height * 0.5f};
+
     DrawTextEx(f_jap, "天使", jp_pos, jp_size, 0, r_color);
     DrawTextEx(f_eng, "Angel", eng_pos, eng_size, 0, r_color);
 }
@@ -985,48 +1025,10 @@ void draw_hex_back(int res_x, int res_y, Font f)
     }
 }
 
-void expir_draw(Vec2 *pts, int i)
-{
-    for (int j = 0; j + 1 < i; j++)
-    {
-        DrawLine(pts[j].x, pts[j].y, pts[j + 1].x, pts[j + 1].y, NERV_MAGI_AMBER);
-    }
-}
-void expir(int res_x, int res_y, Vec2 *pts)
-{
-    if (GetTime() < 1.0f)
-        return;
-    Vec2 md = GetMouseDelta();
-    static int i = 0;
-    expir_draw(pts, i);
-    if ((md.x < 1 && md.y < 1 || i + 1 > MAX_MOUSE_PTS))
-        return;
-    Vec2 v = GetMousePosition();
-    if (v.x < 10 && v.y < 10)
-        return;
-    if (GetTime() < 1.0f)
-    {
-        pts[0].x = v.x;
-        pts[0].y = v.y;
-        pts[1].x = v.x + 1;
-        pts[1].y = v.y + 1;
-        i = 1;
-        return;
-    }
-    pts[i].x = v.x;
-    pts[i].y = v.y;
-    i++;
-    // if mouse clicked and i+1 > MAX_MOUSE_PTS, reset i
-    // would it ever reach this point this though?
-    if (i + 1 > MAX_MOUSE_PTS)
-    {
-        i = 0;
-    }
-}
-
 void draw_get_in_the_bot(Font f, float font_size, float x, float y)
 {
-    if (g_sample.samples[0] == 0) return;
+    if (g_sample.samples[0] == 0)
+        return;
     const char *text = "GET IN THE FUCKING ROBOT SHINJI";
     Vec2 placement = {
         .x = x,
@@ -1063,7 +1065,6 @@ Color get_random_color(void)
     return (Color){r, g, b, 255};
 }
 
-
 void draw_sync_align_back(int res_x, int res_y, Vec2 *list, int max_points)
 {
     static float phase_acc = 0.0f;
@@ -1083,14 +1084,13 @@ void draw_sync_align_back(int res_x, int res_y, Vec2 *list, int max_points)
         ALERT = 1;
 
     Color c = converge_offset ? NERV_MAGI_AMBER : BLUE;
-    static Vec2 ai[500] = { 0 };
-    
+
     for (size_t i = 0; i < max_points - 1; i++)
     {
         Vec2 a = list[i];
         Vec2 b = list[i + 1];
-        Vec2 i_left = {a.x + left_offset-converge_offset, a.y};
-        Vec2 i_right = {b.x + left_offset-converge_offset, b.y};
+        Vec2 i_left = {a.x + left_offset - converge_offset, a.y};
+        Vec2 i_right = {b.x + left_offset - converge_offset, b.y};
         Vec2 ii_left = {a.x + converge_offset, a.y};
         Vec2 ii_right = {b.x + converge_offset, b.y};
         Vec2 iii_left = {a.x + converge_offset + left_offset * 2, a.y};
@@ -1102,8 +1102,7 @@ void draw_sync_align_back(int res_x, int res_y, Vec2 *list, int max_points)
         // GROUP 1
         DrawLineEx(a, b, 4, PURPLE);
         DrawLineEx(i_left, i_right, 4, PURPLE);
-        
-        
+
         // GROUP 2
         DrawLineEx(ii_left, ii_right, 4, RED);
         DrawLineEx(iii_left, iii_right, 4, RED);
@@ -1111,12 +1110,18 @@ void draw_sync_align_back(int res_x, int res_y, Vec2 *list, int max_points)
         DrawLineEx(iv_left, iv_right, 4, WHITE);
         DrawLineEx(v_left, v_right, 4, WHITE);
 
-        if ((int)a.x % 3 == 0) 
-            { DrawLine(b.x, b.y, i_left.x, i_right.y+4, GREEN); }
-        if ((int)b.x % 3 == 0)
-            { DrawLine(ii_right.x, i_right.y, iii_left.x, iii_left.y+5, ORANGE); }
         if ((int)a.x % 3 == 0)
-            { DrawLine(iv_right.x, iv_right.y, v_left.x, v_left.y+2, BLUE); }
+        {
+            DrawLine(b.x, b.y, i_left.x, i_right.y + 4, GREEN);
+        }
+        if ((int)b.x % 3 == 0)
+        {
+            DrawLine(ii_right.x, i_right.y, iii_left.x, iii_left.y + 5, ORANGE);
+        }
+        if ((int)a.x % 3 == 0)
+        {
+            DrawLine(iv_right.x, iv_right.y, v_left.x, v_left.y + 2, BLUE);
+        }
     }
 }
 void draw_snow(int res_x, int res_y)
@@ -1126,169 +1131,327 @@ void draw_snow(int res_x, int res_y)
     {
         int x = GetRandomValue(0, res_x);
         int y = GetRandomValue(0, res_y);
-        if (i % 6 == 0) DrawPixel(x, y, NERV_MAGI_AMBER);
-    } 
+        if (i % 6 == 0)
+            DrawPixel(x, y, NERV_MAGI_AMBER);
+    }
 }
-void draw_typing_text(Font f, const char* text, Vec2 pos, float font_size, Color c, float chars_per_sec, float *elapsed)
+void draw_typing_text(Font f, const char *text, Vec2 pos, float font_size, Color c, float chars_per_sec, float *elapsed)
 {
     *elapsed += GetFrameTime();
 
-    int total   = TextLength(text);
+    int total = TextLength(text);
     int visible = (int)(*elapsed * chars_per_sec);
-    if (visible > total) visible = total;
+    if (visible > total)
+        visible = total;
 
     char buf[1024];
     TextCopy(buf, text);
-    buf[visible] = '\0';
+    buf[visible] = '\0'; // could also use TextLength
     DrawTextEx(f, buf, pos, font_size, 0, c);
 
     if (visible < total && (int)(*elapsed * 2) % 2 == 0)
     {
         Vec2 cursor_pos = {
             .x = pos.x + MeasureTextEx(f, buf, font_size, 0).x + 2,
-            .y = pos.y
-        };
+            .y = pos.y};
         DrawTextEx(f, "|", cursor_pos, font_size, 0, c);
     }
 }
-
-
-
-void _draw(Font fonts[], Music *audio_file)
+void congrats(Font fonts[])
 {
-    float now = GetMusicTimePlayed(*audio_file);
+    static float t_shinji = 0;
+    static float t_seele = 0;
+    static float t_embrace = 0;
+    static float t_congrats = 0;
+    static float t_herzlich = 0;
+    static float t_jp1 = 0;
+    static float t_jp2 = 0;
+    static float t_ibapps = 0;
 
-    
+    Vec2 center = {RES_X / 2, RES_Y / 2 - RES_Y * 0.2};
+
+    Vec2 p_seele = {center.x - RES_X * 0.15f, center.y - RES_Y * 0.10f};
+    Vec2 p_shinji = {center.x + RES_X * 0.20f, center.y - RES_Y * 0.05f};
+    Vec2 p_embrace = {center.x - RES_X * 0.30f, center.y + RES_Y * 0.15f};
+    Vec2 p_congrats = {center.x + RES_X * 0.05f, center.y + RES_Y * 0.35f};
+    Vec2 p_herzlich = {center.x - RES_X * 0.25f, center.y + RES_Y * 0.05f};
+    Vec2 p_jp1 = {center.x + RES_X * 0.18f, center.y - RES_Y * 0.16f};
+    Vec2 p_jp2 = {center.x + RES_X * 0.28f, center.y + RES_Y * 0.08f};
+    Vec2 p_ibapps = {RES_X * .2, RES_Y * .7};
+    float size_f = RES_Y * 0.04f;
+    char *c_ibapps_1 = "github";
+    char *c_ibapps_2 = ".com/";
+    char *c_ibapps_3 = "ibapps39";
+
+    Vec2 text_dist_1 = MeasureTextEx(fonts[MAT_PRO_EB], c_ibapps_1, size_f, 0);
+    Vec2 text_dist_2 = MeasureTextEx(fonts[MAT_PRO_EB], c_ibapps_2, size_f, 0);
+
+    Vec2 p_ibapps_1 = {p_ibapps.x, p_ibapps.y};
+    Vec2 p_ibapps_2 = {p_ibapps.x + text_dist_1.x, p_ibapps.y};
+    Vec2 p_ibapps_3 = {p_ibapps.x + text_dist_1.x + text_dist_2.x, p_ibapps.y};
+
+    draw_snow(RES_X, RES_Y);
+
+    draw_typing_text(fonts[MAT_PRO_EB], "SEELE", p_seele, size_f, EVA_02_YELLOW, 2.0f, &t_seele);
+    draw_typing_text(fonts[MAT_CLASSIC], "EMBRACE HUMAN INSTRUMENTALITY", p_embrace, size_f, RED, 3.0f, &t_embrace);
+
+    draw_typing_text(
+        fonts[MAT_CLASSIC],
+        "Congratulations!",
+        p_congrats,
+        RES_Y * 0.04f,
+        EVA_GREEN,
+        2.0f,
+        &t_congrats);
+
+    draw_typing_text(
+        fonts[MAT_CLASSIC],
+        "Herzlichen Glückwunsch!",
+        p_herzlich,
+        size_f,
+        EVA_02_RED,
+        2.0f,
+        &t_herzlich);
+    draw_typing_text(
+        fonts[JP_MAT_CLASSIC],
+        "おめでとう!",
+        p_jp1,
+        size_f,
+        WHITE, 2.0f,
+        &t_jp1);
+    draw_typing_text(
+        fonts[JP_MAT_STD],
+        "おめでとうございます!",
+        p_jp2,
+        size_f,
+        PURPLE,
+        1.0f,
+        &t_jp2);
+    draw_typing_text(
+        fonts[MAT_PRO_EB],
+        c_ibapps_1,
+        p_ibapps_1,
+        size_f,
+        EVA_01_PURPLE,
+        2.0f,
+        &t_ibapps);
+
+    draw_typing_text(
+        fonts[MAT_PRO_EB],
+        c_ibapps_2,
+        p_ibapps_2,
+        size_f,
+        EVA_02_RED,
+        2.0f,
+        &t_ibapps);
+
+    draw_typing_text(
+        fonts[MAT_PRO_EB],
+        c_ibapps_3,
+        p_ibapps_3,
+        size_f,
+        GREEN,
+        2.0f,
+        &t_ibapps);
+}
+char get_random_char()
+{
+    return (char)GetRandomValue(0, 255);
+}
+
+typedef struct TextScramble
+{
+    Vec2 pos;
+    char** buffer;
+} TextScramble;
+
+void draw_scramble_text(float res_x, float res_y, int MAX_CHAR_PER_LINE) {
+    int font_size = fmaxf(res_x, res_y) * 0.05f;
+    float speed = 1000.0f;                // pixels per second
+    float line_spacing_y = font_size * 1.5f;
+    static float highest_y_line = 0.0f;
+    static bool init = false;
+    if (!init)
+    {
+        for(size_t current_char = 0; current_char < MAX_CHAR_PER_LINE; current_char++) {
+            
+        }
+    }
+
+}
+// Demonstration, hardcoded values for timing and unique display.
+void _demo(Font fonts[], Music *audio_file)
+{
     static bool initialized = false;
     static Vec2 sin_trail[SINE_TRAIL_CAPACITY];
-    
+
+    float now = GetMusicTimePlayed(*audio_file);
+
     if (!initialized)
     {
-        for (size_t i = 0; i < 350; i++) { sin_trail[i] = (Vec2){0}; }
+        for (size_t i = 0; i < 350; i++)
+        {
+            sin_trail[i] = (Vec2){0};
+        }
         initialized = true;
     }
 
     if (now > 21.5f && now < 30.0f)
     {
         draw_hex_back(RES_X, RES_Y, fonts[MAT_CLASSIC]);
-        draw_header((Vec2){0}, RES_X, 0.05*RES_Y, BLACK, YELLOW);
+        draw_header((Vec2){0}, RES_X, 0.05 * RES_Y, BLACK, YELLOW);
     }
 
     if (ALERT)
-    { 
-            draw_signals();
-            if (ANGEL) draw_get_in_the_bot(fonts[MAT_PRO_EB], RES_Y*.07, RES_X * 0.03f, RES_Y * 0.8f);
+    {
+        draw_signals();
+        if (ANGEL)
+            draw_get_in_the_bot(fonts[MAT_PRO_EB], RES_Y * .07, RES_X * 0.03f, RES_Y * 0.8f);
     }
     if (!ALERT)
     {
         draw_sync_align_back(RES_X, RES_Y, sin_trail, 350);
         static float t_shinji = 0.0f;
-        if (now < 10) draw_typing_text(fonts[MAT_CLASSIC], "Shinji, get in the robot", (Vec2){RES_X * 0.1f, RES_Y * 0.8f}, RES_Y * 0.04f, WHITE, 4.0f, &t_shinji);
+        if (now < 10)
+            draw_typing_text(fonts[MAT_CLASSIC], "Shinji, get in the robot", (Vec2){RES_X * 0.1f, RES_Y * 0.8f}, RES_Y * 0.04f, WHITE, 4.0f, &t_shinji);
     }
     draw_axis(RES_X, RES_Y, 5, NERV_MAGI_AMBER);
     draw_overlay(RES_X - RES_X / 4, RES_Y);
     draw_angel_warning(ANGEL, fonts[MAT_CLASSIC], fonts[JP_MAT_CLASSIC]);
     draw_song_time(audio_file, fonts[BOLD_DS_DIGITAL]);
+
+    draw_label(fonts[MAT_PRO_EB], ALERT ? "PYSCHOGRAPHIC DISPLAY" : TextFormat("SYNC RATE\n %.2f%%", fminf(100, 79 + TIME)));
+    if (IsKeyDown(KEY_ONE))
+    {
+        draw_hex_back(RES_X, RES_Y, fonts[MAT_CLASSIC]);
+    }
+    if (IsKeyDown(KEY_TWO))
+    {
+        draw_axis(RES_X, RES_Y, 5, NERV_MAGI_AMBER);
+        draw_signals();
+    }
+    if (now > 40.0f)
+    {
+        congrats(fonts);
+    }
+}
+
+#define HEX_EFFECT_NUM 7
+void draw_hex_flash(int res_x, int res_y)
+{
+    float radius = res_x * 0.1f;
+    Vec2 center = { res_x/2.0f, res_y - radius/5 };
+    static float alphas[HEX_EFFECT_NUM] = {0};
+
+    // Update alphas: inner ring (index 0) lights up fastest, outer (index 2) slowest
+    for (int i = 0; i < HEX_EFFECT_NUM; i++)
+    {
+        // rate = (i+1) * 100  →  inner: 100, middle: 200, outer: 300? No, that's still fastest outer.
+        // We want inner fastest (i=0) -> highest multiplier, outer slowest (i=2) -> lowest multiplier.
+        // So multiplier = (HEX_EFFECT_NUM - i) * 100
+        int multiplier = ((HEX_EFFECT_NUM - i) * 100);  // i=2 (outer) → 100, i=1 → 200, i=0 (inner) → 300
+        alphas[i] += DT * multiplier;
+        float increment = DT * multiplier;
+        if (increment > 255.0f) increment = 255.0f;  // optional safety
+        alphas[i] += increment;
+    }
+
+    // Draw from outermost (i = HEX_EFFECT_NUM-1) to innermost (i=0)
+    for (int i = HEX_EFFECT_NUM - 1; i >= 0; i--)
+    {
+        Color c = NERV_LCL_ORANGE;
+        c.a = (unsigned char)alphas[i];
+        float r = radius * (i + 1);          // i=2 → radius*3 (outer), i=0 → radius*1 (inner)
+        DrawPoly(center, 6, r * 1.1f, 0, c);
+        DrawPoly(center, 6, r,        0, BLACK);
+    }
+}
+
+void avg_dt(float* dt_vals, int count)
+{
+    for (size_t i = 0; i < count; i++)
+    {
+        dt_vals[i] = GetFrameTime();
+    }
+    float sum = 0.0f;
+    for (size_t i = 0; i < count; i++)
+    {
+        sum += dt_vals[i];
+    }
+    float avg = sum / count;
+
+    DrawText(TextFormat("AVG: %f", avg), 0, 0, 20, WHITE);
     
-    draw_label(fonts[MAT_PRO_EB], ALERT ? "PYSCHOGRAPHIC DISPLAY" : TextFormat("SYNC RATE\n %.2f%%", fminf(100, 79+TIME)));
-    if (IsKeyDown(KEY_ONE)) { draw_hex_back(RES_X, RES_Y, fonts[MAT_CLASSIC]); }
-    if (IsKeyDown(KEY_TWO)) { draw_axis(RES_X, RES_Y, 5, NERV_MAGI_AMBER); draw_signals(); }
-    if (now > 40) 
-    { 
-        static float t_shinji = 0;
-        static float t_seele = 0;
-        static float t_embrace = 0;
-        static float t_congrats = 0;
-        static float t_herzlich = 0; 
-        static float t_jp1 = 0;
-        static float t_jp2 = 0;
-        static float t_ibapps = 0;
+}
 
-        Vec2 center = {RES_X/2, RES_Y/2-RES_Y*0.2};
+void _draw(Font fonts[], Music *audio_file, float* dt_arr, float* dt_avg)
+{
+    static float song_l = 0.0f;
+    static float division = 0.0f;
+    static bool initialized = false;
+    static Vec2 sin_trail[SINE_TRAIL_CAPACITY];
+    static int stage = 0;
 
-        Vec2 p_seele    = { center.x - RES_X * 0.15f, center.y - RES_Y * 0.10f };
-        Vec2 p_shinji   = { center.x + RES_X * 0.20f, center.y - RES_Y * 0.05f };
-        Vec2 p_embrace  = { center.x - RES_X * 0.30f, center.y + RES_Y * 0.15f };
-        Vec2 p_congrats = { center.x + RES_X * 0.05f, center.y + RES_Y * 0.35f };
-        Vec2 p_herzlich = { center.x - RES_X * 0.25f, center.y + RES_Y * 0.05f };
-        Vec2 p_jp1      = { center.x + RES_X * 0.18f, center.y - RES_Y * 0.16f };
-        Vec2 p_jp2      = { center.x + RES_X * 0.28f, center.y + RES_Y * 0.08f };
-        Vec2 p_ibapps   = { RES_X*.2, RES_Y*.7 };
-        float size_f = RES_Y * 0.04f;
-        char* c_ibapps_1 = "github";
-        char* c_ibapps_2 = ".com/";
-        char* c_ibapps_3 = "ibapps39";
-        
-        Vec2 text_dist_1 = MeasureTextEx(fonts[MAT_PRO_EB], c_ibapps_1, size_f, 0);
-        Vec2 text_dist_2 = MeasureTextEx(fonts[MAT_PRO_EB], c_ibapps_2, size_f, 0);
-        
-        Vec2 p_ibapps_1 = {p_ibapps.x, p_ibapps.y};
-        Vec2 p_ibapps_2 = {p_ibapps.x + text_dist_1.x, p_ibapps.y};
-        Vec2 p_ibapps_3 = {p_ibapps.x + text_dist_1.x + text_dist_2.x, p_ibapps.y};
-        
-        draw_snow(RES_X, RES_Y); 
-        
-        draw_typing_text(fonts[MAT_PRO_EB], "SEELE", p_seele, size_f, EVA_02_YELLOW, 2.0f, &t_seele);
-        draw_typing_text(fonts[MAT_CLASSIC], "EMBRACE HUMAN INSTRUMENTALITY", p_embrace, size_f, RED, 3.0f, &t_embrace);
-        
-        draw_typing_text(
-            fonts[MAT_CLASSIC], 
-            "Congratulations!", 
-            p_congrats, 
-            RES_Y * 0.04f, 
-            EVA_GREEN, 
-            2.0f, 
-            &t_congrats);
+    float now = GetMusicTimePlayed(*audio_file);
 
-        draw_typing_text(
-            fonts[MAT_CLASSIC], 
-            "Herzlichen Glückwunsch!", 
-            p_herzlich, 
-            size_f, 
-            EVA_02_RED, 
-            2.0f, 
-            &t_herzlich);
-        draw_typing_text(
-            fonts[JP_MAT_CLASSIC], 
-            "おめでとう!", 
-            p_jp1, 
-            size_f, 
-            WHITE, 2.0f, 
-            &t_jp1);
-        draw_typing_text( 
-            fonts[JP_MAT_STD], 
-            "おめでとうございます!", 
-            p_jp2, 
-            size_f, 
-            PURPLE, 
-            1.0f, 
-            &t_jp2);
-        draw_typing_text( 
-        fonts[MAT_PRO_EB], 
-        c_ibapps_1, 
-        p_ibapps_1, 
-        size_f, 
-        EVA_01_PURPLE, 
-        2.0f, 
-        &t_ibapps);
-        
-        draw_typing_text( 
-        fonts[MAT_PRO_EB], 
-        c_ibapps_2, 
-        p_ibapps_2, 
-        size_f, 
-        EVA_02_RED, 
-        2.0f, 
-        &t_ibapps);
+    if (!initialized)
+    {
+        for (size_t i = 0; i < 350; i++)
+        {
+            sin_trail[i] = (Vec2){0};
+        }
+        song_l = GetMusicTimeLength(*audio_file);
+        division = (song_l <= 60.0f) ? 2.00f : song_l / 4;
+        initialized = true;
+    }
 
-        draw_typing_text( 
-        fonts[MAT_PRO_EB], 
-        c_ibapps_3, 
-        p_ibapps_3, 
-        size_f, 
-        GREEN, 
-        2.0f, 
-        &t_ibapps);
-        
+    avg_dt(dt_arr, 60);
+    if (IsKeyDown(KEY_ONE))     draw_angel_warning(1, fonts[MAT_CLASSIC], fonts[JP_MAT_CLASSIC]);
+    if (IsKeyDown(KEY_TWO))     draw_scramble_text(RES_X, RES_Y, 70);
+    if (IsKeyDown(KEY_THREE))   draw_hex_flash(RES_X, RES_Y);
+    if (IsKeyDown(KEY_FOUR))    draw_snow(RES_X, RES_Y);
+    
+    
+    
+    if (now >= division*3 && stage < 4) stage = 4;
+    if (now >= division*2 && stage < 3) stage = 3;
+    if (now >= division*1 && stage < 2) stage = 2;
+    if (now == division && stage < 1) stage = 1;
+
+    // Constant
+    draw_axis(RES_X, RES_Y, 5, NERV_MAGI_AMBER);
+    draw_overlay(RES_X - RES_X / 4, RES_Y);
+    draw_angel_warning(ANGEL, fonts[MAT_CLASSIC], fonts[JP_MAT_CLASSIC]);
+    draw_song_time(audio_file, fonts[BOLD_DS_DIGITAL]);
+    draw_label(fonts[MAT_PRO_EB], ALERT ? "PYSCHOGRAPHIC DISPLAY" : TextFormat("SYNC RATE\n %.2f%%", fminf(100, 79 + TIME)));
+    
+    if (ALERT)
+    {
+        draw_signals();
+        if (ANGEL)
+            draw_get_in_the_bot(fonts[MAT_PRO_EB], RES_Y * .07, RES_X * 0.03f, RES_Y * 0.8f);
+    }
+    switch (stage)
+    {
+        case 0:
+            draw_sync_align_back(RES_X, RES_Y, sin_trail, SINE_TRAIL_CAPACITY);
+            static float t_get_into_the_bot = 0.0f;
+            if (now < 10) draw_typing_text(fonts[MAT_CLASSIC], "Shinji, get in the robot", (Vec2){RES_X * 0.1f, RES_Y * 0.8f}, RES_Y * 0.04f, WHITE, 4.0f, &t_get_into_the_bot);
+        break;
+        case 1:
+            //draw_hex_flash(RES_X, RES_Y);
+            break;
+        case 2:
+            draw_hex_back(RES_X, RES_Y, fonts[MAT_CLASSIC]);
+            draw_header((Vec2){0}, RES_X, 0.05 * RES_Y, BLACK, YELLOW);
+            break;
+        case 3:
+            draw_scramble_text(RES_X, RES_Y, 70);
+            break;
+        case 4:
+            congrats(fonts);
+            break;
+        default:
+            break;
     }
 }
