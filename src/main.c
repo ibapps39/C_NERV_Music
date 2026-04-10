@@ -1,33 +1,32 @@
 #include "nerv_visualizer.h"
 int main(void)
 {
-    const int INITIAL_SCREEN_WIDTH = 700;
-    const int INITIAL_SCREEN_HEIGHT = 400;
+    // Window load
+    const int INITIAL_SCREEN_WIDTH = 0;
+    const int INITIAL_SCREEN_HEIGHT = 0;
     const int INITIAL_FPS = 60;
+    SetConfigFlags(FLAG_MSAA_4X_HINT | FLAG_WINDOW_RESIZABLE);
+    InitWindow(INITIAL_SCREEN_WIDTH, INITIAL_SCREEN_HEIGHT,  "NERV Sine Monitor");
+    //if (!IsWindowFullscreen()) { ToggleFullscreen(); }
 
-    SetConfigFlags(FLAG_MSAA_4X_HINT);
-    InitWindow(0, 0, "NERV Sine Monitor");
-    if (!IsWindowFullscreen())
-        ToggleFullscreen();
-
+    // Font load
     Font fonts[6];
     int *cjk_ptr = NULL;
     int cp_count = 0;
     load_nerv_fonts(fonts, &cjk_ptr, &cp_count);
+
+    // Shader load
     Shader bloom_s = LoadShader(NULL, "resources/shaders/bloom.fs");
 
-    if (!IsAudioDeviceReady())
-        InitAudioDevice();
-    // InitAudioDevice();
+    // Audio load
+    if (!IsAudioDeviceReady()) { InitAudioDevice(); }
     Music audio_file = LoadMusicStream("putAudioFileHere/song.mp3");
     Sound alarm_tone = LoadSound("resources/Target_locked_tone.ogg");
-    // right after LoadMusicStream:
     if (audio_file.stream.buffer == NULL)
     {
         TraceLog(LOG_ERROR, "Failed to load audio file");
     }
 
-    // TIME = 0;
     RES_X = GetScreenWidth();
     RES_Y = GetScreenHeight();
     DT = 0.0f;
@@ -35,15 +34,23 @@ int main(void)
     PlayMusicStream(audio_file);
     AttachAudioStreamProcessor(audio_file.stream, audio_callback);
     bool is_playing = true;
-    RenderTexture2D target = LoadRenderTexture(RES_X, RES_Y);
-    // 4. Re-calculate your render texture to match the new screen size
+
+
+    // Texture load
+    // Re-calculate your render texture to match the new screen size
     // If you don't do this, your shader will look like shit because it's upscaling
-    UnloadRenderTexture(target);
+    RenderTexture2D target = LoadRenderTexture(RES_X, RES_Y);
+    if (IsWindowResized) { UnloadRenderTexture(target); }
     target = LoadRenderTexture(RES_X, RES_Y);
 
+    float dt_array[500];
+    float dt_avg;
+    
+    // Program loop
     while (!WindowShouldClose())
     {
         TIME = GetTime();
+        
 
         Rectangle shader_rect = {
             .x = 0,
@@ -51,19 +58,25 @@ int main(void)
             .width = RES_X,
             .height = -RES_Y,
         };
-        if (IsKeyDown(KEY_F))
-            SeekMusicStream(audio_file, (GetTime()) + 5.0f);
+        
+        if (IsKeyDown(KEY_F)) { SeekMusicStream(audio_file, (GetTime()) + 5.0f); }
+
         BOUND_LEFT = RES_X / 2.0f - RES_X / 2.0f * 0.3f;
         BOUND_RIGHT = BOUND_LEFT * 2;
+        
         window_monitor(IsWindowResized());
         shader_monitor(&target);
         music_switch(&is_playing, &audio_file);
         UpdateMusicStream(audio_file);
+        
         play_angle_warning_sound(ANGEL, &alarm_tone);
-
+        
+        // Start texture
         BeginTextureMode(target);
         ClearBackground(OFF_BLACK);
-        _draw(fonts, &audio_file);
+        //_draw(fonts, &audio_file, dt_array, &dt_avg);
+
+        _demo(fonts, &audio_file);
         EndTextureMode();
 
         BeginDrawing();

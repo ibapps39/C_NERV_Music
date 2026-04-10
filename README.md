@@ -3,6 +3,10 @@ AI Generated README + personal edits (temporary but better than nothing)
 
 An immersive, real-time music visualization application inspired by the NERV interface from Neon Genesis Evangelion. Built with C and Raylib, this project transforms audio input into dynamic visual displays featuring AT Field analysis, sync rate monitoring, and Angel detection systems.
 
+# About the fonts
+- The fonts are copyrighted, so, obviously I can't distrbute that. That said, there's stopping you front find & replac'ng the font enum with your own or just naming the fonts you wish to use the same as referenced here. 
+- That said, for the japanese fonts you very likely need to change the loading code some. Iconographic languages can and often do have a huge number of glyphs (characters) -- so loading all would use considerably more resources. 
+
 ## Features
 
 ### 🎵 Audio Visualization
@@ -63,7 +67,7 @@ cd C_NERV_Music
 make
 
 # Prepare audio file (see Configuration section)
-mkdir -p putAudioFileHere
+mkdir -p putAudioFileHere # if not there already
 cp /path/to/your/song.mp3 putAudioFileHere/
 
 # Run the application
